@@ -25,6 +25,8 @@ When the user asks a question, the extension sends the request to the AI endpoin
 - extracted page text
 - recent sidebar conversation history
 
+When the user asks BrowserMate AI to plan page actions, the request can also include summaries of actionable page elements, such as button labels, link labels, input types, placeholders, select options, and approximate viewport positions. Password values and file inputs are not included.
+
 The extension only sends this data to the endpoint configured by the user. The privacy practices of that endpoint are controlled by the selected service provider.
 
 ## Data Not Collected by This Project
@@ -34,6 +36,8 @@ This project does not collect, sell, share, or transmit data to project maintain
 ## Recommended Usage
 
 Do not send sensitive pages, private documents, credentials, financial records, medical records, or confidential work content to an AI provider unless you trust that provider and understand its data policy.
+
+Review AI-generated page action plans before executing them. BrowserMate AI requires confirmation before execution and blocks common high-risk actions, but users remain responsible for checking the page state before continuing.
 
 ## Contact
 

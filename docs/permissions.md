@@ -16,12 +16,13 @@ Allows the background service worker to inject the content script when a page di
 
 ## `http://*/*` and `https://*/*`
 
-Used for two things:
+Used for three things:
 
 - running the content script on ordinary web pages so the sidebar can read visible text, selected text, and extracted page text
+- collecting summaries of visible actionable elements when the user asks AI to plan page operations
 - allowing the background service worker to call a user-configured AI endpoint
 
-The extension does not send page content automatically on page load. Page context is sent when the user asks a question, clicks a quick action, or tests the configured AI connection.
+The extension does not send page content or actionable element summaries automatically on page load. Page context is sent when the user asks a question, clicks a quick action, asks AI to plan page operations, or tests the configured AI connection.
 
 ## Future Improvements
 

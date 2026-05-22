@@ -5,6 +5,7 @@
   const MAX_PAGE_TEXT = 16000;
   const MAX_VIEWPORT_TEXT = 7000;
   const MAX_SELECTION_TEXT = 4000;
+  const MAX_ACTION_ELEMENTS = 80;
   const PAGE_CACHE_TTL_MS = 45000;
   const QUICK_PROMPTS = {
     summarize: "请总结当前网页的主要内容，并列出关键结论。",
@@ -26,6 +27,7 @@
     contextMeta: null,
     sendButton: null,
     stopButton: null,
+    activePlan: null,
     conversation: [],
     pendingMessage: null,
     lastRequest: null,
@@ -90,6 +92,7 @@
             <button class="pm-chip" data-prompt="explain" type="button">解释选中</button>
             <button class="pm-chip" data-prompt="translate" type="button">翻译选中</button>
             <button class="pm-chip" data-prompt="questions" type="button">继续追问</button>
+            <button class="pm-chip" data-action="plan-actions" type="button">自动操作</button>
           </div>
           <div class="pm-quote" hidden>
             <div>
@@ -264,6 +267,15 @@
     if (action === "options") {
       safeSendMessage({ type: "BROWSERMATE_OPEN_OPTIONS" }).catch(handleRuntimeFailure);
     }
+    if (action === "plan-actions") {
+      planPageActions().catch(handleRuntimeFailure);
+    }
+    if (action === "execute-plan") {
+      executeActivePlan().catch(handleRuntimeFailure);
+    }
+    if (action === "discard-plan") {
+      discardActivePlan();
+    }
     if (action === "retry" && state.lastRequest) {
       retryLastRequest().catch(handleRuntimeFailure);
     }
@@ -350,6 +362,93 @@
     state.lastRequest = payload;
 
     await streamAIResponse(payload);
+  }
+
+  async function planPageActions() {
+    if (state.streamPort) {
+      setStatus("上一条回复仍在生成中，可先停止生成。");
+      return;
+    }
+
+    const instruction = normalizeText(state.textarea.value);
+    if (!instruction) {
+      setStatus("请先输入你想让 AI 帮你操作页面的目标。");
+      state.textarea.focus();
+      return;
+    }
+
+    openPanel();
+    const context = getPageContext();
+    const actionContext = collectActionContext();
+    addMessage("user", `请帮我操作页面：${instruction}`);
+    state.textarea.value = "";
+    resizeComposer();
+    state.pendingMessage = addMessage("assistant", "正在分析页面可操作元素...", { pending: true });
+    setBusy(true);
+    setStatus("AI 正在规划页面操作...");
+
+    try {
+      const response = await safeSendMessage({
+        type: "BROWSERMATE_ACTION_PLAN",
+        payload: {
+          instruction,
+          pageTitle: context.title,
+          pageUrl: context.url,
+          selectedText: limitText(context.selectedText, MAX_SELECTION_TEXT),
+          viewportText: limitText(context.viewportText, 3000),
+          elements: actionContext.elements,
+        },
+      });
+
+      if (!response?.ok) {
+        throw new Error(response?.error || "无法生成页面操作计划。");
+      }
+
+      state.activePlan = {
+        ...response.result,
+        elements: actionContext.elements,
+        createdAt: Date.now(),
+      };
+      updatePendingActionPlan(state.activePlan);
+      setStatus(state.activePlan.steps?.length ? "操作计划已生成，确认后可执行。" : "没有可执行步骤。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function executeActivePlan() {
+    const plan = state.activePlan;
+    if (!plan?.steps?.length) {
+      setStatus("当前没有可执行的操作计划。");
+      return;
+    }
+
+    const unsafeStep = plan.steps.find((step) => isUnsafeActionStep(step, plan.elements));
+    if (unsafeStep) {
+      addMessage("assistant", `已拦截高风险操作：${describeActionStep(unsafeStep, plan.elements)}。请手动完成这类操作。`, { error: true });
+      setStatus("已拦截高风险操作");
+      return;
+    }
+
+    setStatus("正在执行页面操作...");
+    addMessage("assistant", "开始执行已确认的页面操作计划。");
+
+    for (let index = 0; index < plan.steps.length; index += 1) {
+      const step = plan.steps[index];
+      await performActionStep(step, plan.elements);
+      setStatus(`已执行 ${index + 1}/${plan.steps.length}`);
+      await delay(260);
+    }
+
+    addMessage("assistant", "页面操作计划已执行完成。");
+    state.activePlan = null;
+    setStatus("页面操作完成");
+  }
+
+  function discardActivePlan() {
+    state.activePlan = null;
+    addMessage("assistant", "已取消这份页面操作计划。");
+    setStatus("已取消操作计划");
   }
 
   function streamAIResponse(payload) {
@@ -463,6 +562,17 @@
     state.pendingMessage = null;
   }
 
+  function updatePendingActionPlan(plan) {
+    if (!state.pendingMessage) return;
+
+    cancelPendingRender();
+    state.pendingMessage.classList.remove("is-pending");
+    state.pendingMessage.querySelector(".pm-bubble").innerHTML = renderActionPlan(plan);
+    rememberMessage("assistant", renderActionPlanText(plan));
+    scrollMessagesToBottom();
+    state.pendingMessage = null;
+  }
+
   function appendPendingMessage(delta) {
     if (!state.pendingMessage || !delta) return;
 
@@ -514,6 +624,7 @@
     state.conversation = [];
     state.pendingMessage = null;
     state.lastRequest = null;
+    state.activePlan = null;
     state.streamingText = "";
     state.messages.textContent = "";
     addMessage("assistant", "对话已清空。当前网页内容仍会作为后续问题的上下文。");
@@ -610,6 +721,277 @@
       pageText: state.pageCache.pageText,
       cachedAt: state.pageCache.cachedAt,
     };
+  }
+
+  function collectActionContext() {
+    const selectors = [
+      "button",
+      "a[href]",
+      "input:not([type='hidden'])",
+      "textarea",
+      "select",
+      "[role='button']",
+      "[role='link']",
+      "[role='checkbox']",
+      "[role='radio']",
+      "[role='switch']",
+      "[role='tab']",
+      "[contenteditable='true']",
+      "[tabindex]:not([tabindex='-1'])",
+    ];
+
+    const elements = [];
+    const seen = new Set();
+    const candidates = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
+
+    for (const element of candidates) {
+      if (elements.length >= MAX_ACTION_ELEMENTS) break;
+      if (seen.has(element) || !isActionableElement(element)) continue;
+      seen.add(element);
+
+      const rect = element.getBoundingClientRect();
+      const tag = element.tagName.toLowerCase();
+      const type = normalizeText(element.getAttribute("type") || element.getAttribute("role") || tag).toLowerCase();
+      const label = getActionElementLabel(element);
+      if (!label && !["input", "textarea", "select"].includes(tag)) continue;
+
+      const id = `e${elements.length + 1}`;
+      element.dataset.browsermateActionId = id;
+      elements.push({
+        id,
+        tag,
+        type,
+        label: limitText(label || `${tag} ${type}`, 140),
+        value: getActionElementValue(element),
+        placeholder: limitText(element.getAttribute("placeholder") || "", 100),
+        options: getSelectOptions(element),
+        disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
+        visible: isElementInViewport(rect),
+        x: Math.round(rect.left + rect.width / 2),
+        y: Math.round(rect.top + rect.height / 2),
+      });
+    }
+
+    return { elements };
+  }
+
+  function isActionableElement(element) {
+    if (!element || state.host?.contains(element)) return false;
+    if (element.closest("#browsermate-ai-host")) return false;
+    if (element.closest("[hidden], [aria-hidden='true'], [inert]")) return false;
+    if (element.matches("input[type='password'], input[type='file']")) return false;
+
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return (
+      rect.width >= 4 &&
+      rect.height >= 4 &&
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      style.opacity !== "0" &&
+      !element.disabled &&
+      element.getAttribute("aria-disabled") !== "true"
+    );
+  }
+
+  function getActionElementLabel(element) {
+    const aria = element.getAttribute("aria-label") || element.getAttribute("title") || element.getAttribute("alt");
+    const labelledBy = element.getAttribute("aria-labelledby");
+    const labelledText = labelledBy
+      ? labelledBy
+          .split(/\s+/)
+          .map((id) => document.getElementById(id)?.innerText || "")
+          .join(" ")
+      : "";
+    const associatedLabel =
+      element.labels?.length
+        ? Array.from(element.labels)
+            .map((label) => label.innerText || "")
+            .join(" ")
+        : findExplicitLabelText(element);
+    const wrappingLabel = element.closest("label")?.innerText || "";
+    const text = element.innerText || element.textContent || "";
+
+    return normalizeText(aria || labelledText || associatedLabel || wrappingLabel || text || element.getAttribute("name") || "");
+  }
+
+  function getActionElementValue(element) {
+    if (!["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName)) return "";
+    if (element.type === "password") return "";
+    return limitText(element.value || "", 120);
+  }
+
+  function getSelectOptions(element) {
+    if (element.tagName !== "SELECT") return [];
+    return Array.from(element.options)
+      .slice(0, 30)
+      .map((option) => normalizeText(option.textContent || option.value))
+      .filter(Boolean);
+  }
+
+  function isElementInViewport(rect) {
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+    return rect.bottom > 0 && rect.right > 0 && rect.top < viewportHeight && rect.left < viewportWidth;
+  }
+
+  function renderActionPlan(plan) {
+    const steps = Array.isArray(plan.steps) ? plan.steps : [];
+    const notes = Array.isArray(plan.notes) ? plan.notes : [];
+    const stepItems = steps.map((step) => `<li>${escapeHtml(describeActionStep(step, plan.elements))}</li>`).join("");
+    const noteItems = notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("");
+
+    return `
+      <div class="pm-plan">
+        <strong>${escapeHtml(plan.summary || "页面操作计划")}</strong>
+        ${
+          steps.length
+            ? `<ol>${stepItems}</ol>
+              <div class="pm-plan-actions">
+                <button class="pm-inline-action" data-action="execute-plan" type="button">执行计划</button>
+                <button class="pm-inline-action" data-action="discard-plan" type="button">取消</button>
+              </div>`
+            : "<p>没有生成可执行步骤。</p>"
+        }
+        ${noteItems ? `<div class="pm-plan-notes"><span>注意</span><ul>${noteItems}</ul></div>` : ""}
+      </div>
+    `;
+  }
+
+  function renderActionPlanText(plan) {
+    const steps = Array.isArray(plan.steps) ? plan.steps : [];
+    const notes = Array.isArray(plan.notes) ? plan.notes : [];
+    const lines = [`${plan.summary || "页面操作计划"}`];
+
+    if (steps.length) {
+      lines.push("", ...steps.map((step, index) => `${index + 1}. ${describeActionStep(step, plan.elements)}`));
+    } else {
+      lines.push("", "没有生成可执行步骤。");
+    }
+
+    if (notes.length) {
+      lines.push("", "注意：", ...notes.map((note) => `- ${note}`));
+    }
+
+    return lines.join("\n");
+  }
+
+  function describeActionStep(step, elements = []) {
+    const element = elements.find((item) => item.id === step.targetId);
+    const target = element ? `${element.label || element.tag}（${element.id}）` : step.targetId || "页面";
+    const value = step.value ? `：${step.value}` : "";
+    const reason = step.reason ? ` - ${step.reason}` : "";
+    const actionLabels = {
+      click: "点击",
+      type: "输入",
+      select: "选择",
+      check: "勾选",
+      uncheck: "取消勾选",
+      scroll: "滚动",
+      wait: "等待",
+    };
+    return `${actionLabels[step.action] || step.action} ${target}${value}${reason}`;
+  }
+
+  async function performActionStep(step, elements = []) {
+    if (step.action === "wait") {
+      await delay(Math.min(3000, Math.max(200, Number(step.value) || 800)));
+      return;
+    }
+
+    if (step.action === "scroll") {
+      const value = String(step.value || "").toLowerCase();
+      const amount = value.includes("up") || value.includes("上") ? -Math.round(window.innerHeight * 0.72) : Math.round(window.innerHeight * 0.72);
+      window.scrollBy({ top: amount, behavior: "smooth" });
+      return;
+    }
+
+    const elementMeta = elements.find((item) => item.id === step.targetId);
+    const element = elementMeta ? document.querySelector(`[data-browsermate-action-id="${escapeCssIdentifier(elementMeta.id)}"]`) : null;
+    if (!element || !isActionableElement(element)) {
+      throw new Error(`找不到可操作元素：${step.targetId || "未指定"}`);
+    }
+
+    element.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+    await delay(260);
+    element.focus?.({ preventScroll: true });
+
+    if (step.action === "click") {
+      element.click();
+      return;
+    }
+
+    if (step.action === "type") {
+      setElementValue(element, step.value || "");
+      return;
+    }
+
+    if (step.action === "select") {
+      setSelectValue(element, step.value || "");
+      return;
+    }
+
+    if (step.action === "check" || step.action === "uncheck") {
+      setCheckedValue(element, step.action === "check");
+    }
+  }
+
+  function setElementValue(element, value) {
+    if (element.matches("input[type='password'], input[type='file']")) {
+      throw new Error("出于安全原因，BrowserMate AI 不会填写密码或文件输入框。");
+    }
+
+    if (element.isContentEditable) {
+      element.textContent = value;
+      element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+      return;
+    }
+
+    if (!["INPUT", "TEXTAREA"].includes(element.tagName)) {
+      throw new Error("目标元素不是可输入控件。");
+    }
+
+    element.value = value;
+    element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function setSelectValue(element, value) {
+    if (element.tagName !== "SELECT") {
+      throw new Error("目标元素不是下拉选择框。");
+    }
+
+    const option = Array.from(element.options).find((item) => item.value === value || normalizeText(item.textContent) === normalizeText(value));
+    if (!option) {
+      throw new Error(`下拉框中找不到选项：${value}`);
+    }
+
+    element.value = option.value;
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function setCheckedValue(element, checked) {
+    if (element.matches("input[type='checkbox'], input[type='radio']")) {
+      if (element.checked !== checked) element.click();
+      return;
+    }
+
+    if (["checkbox", "radio", "switch"].includes(element.getAttribute("role"))) {
+      const current = element.getAttribute("aria-checked") === "true";
+      if (current !== checked) element.click();
+      return;
+    }
+
+    throw new Error("目标元素不是可勾选控件。");
+  }
+
+  function isUnsafeActionStep(step, elements = []) {
+    const element = elements.find((item) => item.id === step.targetId);
+    const text = normalizeText(`${step.action} ${step.value || ""} ${step.reason || ""} ${element?.label || ""} ${element?.type || ""}`).toLowerCase();
+    return /password|passwd|pwd|pay|payment|purchase|buy|order|checkout|delete|remove|destroy|transfer|withdraw|submit|publish|save|confirm|place order|密码|支付|付款|购买|下单|提交|保存|发布|确认|删除|移除|注销|转账|提现|上传|文件/.test(
+      text,
+    );
   }
 
   function extractMainText() {
@@ -1028,6 +1410,23 @@
       .replace(/'/g, "&#039;");
   }
 
+  function escapeCssIdentifier(value) {
+    if (window.CSS?.escape) return CSS.escape(value);
+    return String(value || "").replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+  }
+
+  function findExplicitLabelText(element) {
+    if (!element.id) return "";
+    return Array.from(document.querySelectorAll("label"))
+      .filter((label) => label.htmlFor === element.id)
+      .map((label) => label.innerText || "")
+      .join(" ");
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   function debounce(fn, delay) {
     let timer = 0;
     return (...args) => {
@@ -1321,6 +1720,48 @@
         font-size: 12px;
         font-weight: 800;
         padding: 4px 10px;
+      }
+
+      .pm-plan {
+        display: grid;
+        gap: 8px;
+      }
+
+      .pm-plan strong {
+        color: #172d2c;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .pm-plan ol,
+      .pm-plan ul {
+        margin: 0;
+        padding-left: 18px;
+      }
+
+      .pm-plan li {
+        margin: 4px 0;
+      }
+
+      .pm-plan-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .pm-plan-notes {
+        border-left: 3px solid #d99576;
+        border-radius: 6px;
+        background: #fff4e2;
+        padding: 7px 8px;
+      }
+
+      .pm-plan-notes span {
+        display: block;
+        margin-bottom: 4px;
+        color: #8b5736;
+        font-size: 11px;
+        font-weight: 800;
       }
 
       .pm-message-quote {

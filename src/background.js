@@ -29,6 +29,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "BROWSERMATE_ACTION_PLAN") {
+    planPageActions(message.payload)
+      .then((result) => sendResponse({ ok: true, result }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message?.type === "BROWSERMATE_OPEN_OPTIONS") {
     chrome.runtime.openOptionsPage();
     sendResponse({ ok: true });
@@ -196,6 +203,30 @@ async function streamWithAI(payload, options = {}) {
   return fullText.trim();
 }
 
+async function planPageActions(payload = {}) {
+  const settings = await getSettings();
+  const endpoint = normalizeEndpoint(settings.endpoint);
+
+  if (!endpoint || !settings.apiKey) {
+    throw new Error("请先在扩展选项页配置 AI 接口地址和 API Key。");
+  }
+
+  const messages = buildActionPlanMessages(payload);
+  const request = buildChatRequest(settings, messages, false);
+  const response = await fetchWithTimeout(endpoint, request);
+
+  if (!response.ok) {
+    throw new Error(await describeHttpError(response));
+  }
+
+  const content = extractMessageContent(await safeJson(response));
+  if (!content) {
+    throw new Error("AI 没有返回可执行的页面操作计划。");
+  }
+
+  return normalizeActionPlan(content);
+}
+
 function buildChatRequest(settings, messages, stream, signal) {
   return {
     method: "POST",
@@ -324,6 +355,81 @@ function buildContextMessages(payload = {}) {
       content: `用户问题：${question}`,
     },
   ];
+}
+
+function buildActionPlanMessages(payload = {}) {
+  const instruction = String(payload.instruction || "").trim();
+  const elements = Array.isArray(payload.elements) ? payload.elements.slice(0, 80) : [];
+  const pageInfo = {
+    title: payload.pageTitle || "",
+    url: payload.pageUrl || "",
+    visibleText: String(payload.viewportText || "").slice(0, 3000),
+    selectedText: String(payload.selectedText || "").slice(0, 1200),
+    elements,
+  };
+
+  return [
+    {
+      role: "system",
+      content:
+        "你是 BrowserMate AI 的页面操作规划器。你只能根据用户指令和给定的可操作元素列表生成安全、有限、可确认的浏览器页面操作计划。只返回 JSON，不要返回 Markdown、解释文本或代码块。JSON 格式必须为：{\"summary\":\"一句话概括计划\",\"steps\":[{\"action\":\"click|type|select|check|uncheck|scroll|wait\",\"targetId\":\"元素 id，可为空\",\"value\":\"输入值、选择值、滚动方向或等待毫秒，可为空\",\"reason\":\"为什么执行这一步\"}],\"notes\":[\"必要的提醒\"]}。只能使用元素列表中存在的 targetId。不要臆造用户没有提供的姓名、邮箱、地址、密码、支付信息或其他个人信息。不要规划支付、购买、下单、转账、删除、注销、提交订单、上传文件、输入密码等高风险动作；遇到这类请求时返回空 steps 并在 notes 说明需要用户手动完成。若页面元素不足以完成任务，也返回空 steps 并说明缺少什么。",
+    },
+    {
+      role: "user",
+      content: JSON.stringify(
+        {
+          instruction,
+          page: pageInfo,
+        },
+        null,
+        2,
+      ),
+    },
+  ];
+}
+
+function normalizeActionPlan(content) {
+  const parsed = parseJsonObject(content);
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("AI 返回的页面操作计划不是有效 JSON。");
+  }
+
+  const allowedActions = new Set(["click", "type", "select", "check", "uncheck", "scroll", "wait"]);
+  const steps = Array.isArray(parsed.steps)
+    ? parsed.steps
+        .map((step) => ({
+          action: String(step?.action || "").trim().toLowerCase(),
+          targetId: String(step?.targetId || step?.target || "").trim(),
+          value: String(step?.value ?? "").slice(0, 500),
+          reason: String(step?.reason || "").slice(0, 240),
+        }))
+        .filter((step) => allowedActions.has(step.action))
+        .slice(0, 10)
+    : [];
+
+  return {
+    summary: String(parsed.summary || "页面操作计划").slice(0, 240),
+    steps,
+    notes: Array.isArray(parsed.notes) ? parsed.notes.map((note) => String(note).slice(0, 240)).slice(0, 5) : [],
+  };
+}
+
+function parseJsonObject(content) {
+  const text = String(content || "").trim();
+  const withoutFence = text.replace(/^```(?:json)?\s*/i, "").replace(/```$/i, "").trim();
+
+  try {
+    return JSON.parse(withoutFence);
+  } catch {
+    const start = withoutFence.indexOf("{");
+    const end = withoutFence.lastIndexOf("}");
+    if (start === -1 || end === -1 || end <= start) return null;
+    try {
+      return JSON.parse(withoutFence.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
 }
 
 function normalizeHistory(history = []) {
