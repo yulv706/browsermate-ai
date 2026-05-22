@@ -19,16 +19,9 @@
       description: "低风险自动执行",
     },
     fullAccess: {
-      label: "完全权限",
+      label: "完全访问权限",
       description: "支持动作自动执行",
     },
-  };
-  const QUICK_PROMPTS = {
-    summarize: "请总结当前网页的主要内容，并列出关键结论。",
-    "key-points": "请提炼当前网页最重要的 5 个要点。",
-    explain: "请解释我选中的这段内容，先给出一句话结论，再补充关键细节。",
-    translate: "请把我选中的这段内容翻译成简体中文，并保留关键术语。",
-    questions: "请基于当前网页生成 5 个值得继续追问的问题。",
   };
 
   const state = {
@@ -44,8 +37,9 @@
     sendButton: null,
     stopButton: null,
     permissionBadge: null,
+    permissionMenu: null,
     settings: null,
-    composeMode: "auto",
+    composeMode: "agent",
     activePlan: null,
     conversation: [],
     pendingMessage: null,
@@ -106,7 +100,6 @@
 
         <div class="pm-page-state">
           <span class="pm-meta"></span>
-          <button class="pm-permission" data-action="cycle-permission" type="button" title="切换 Agent 权限" aria-label="切换 Agent 权限"></button>
         </div>
 
         <section class="pm-chat" aria-label="对话内容">
@@ -114,14 +107,6 @@
         </section>
 
         <form class="pm-form">
-          <div class="pm-quick-actions" aria-label="快捷操作">
-            <button class="pm-chip" data-prompt="summarize" type="button">总结网页</button>
-            <button class="pm-chip" data-prompt="key-points" type="button">提炼要点</button>
-            <button class="pm-chip" data-prompt="explain" type="button">解释选中</button>
-            <button class="pm-chip" data-prompt="translate" type="button">翻译选中</button>
-            <button class="pm-chip" data-prompt="questions" type="button">继续追问</button>
-            <button class="pm-chip" data-action="agent-mode" type="button">Agent 模式</button>
-          </div>
           <div class="pm-quote" hidden>
             <div>
               <span>引用选中内容</span>
@@ -130,9 +115,34 @@
             <button data-action="clear-quote" type="button" title="取消引用" aria-label="取消引用">×</button>
           </div>
           <div class="pm-composer">
-            <textarea rows="1" aria-label="向 BrowserMate Agent 下达任务" placeholder="提问，或让 Agent 操作当前网页..."></textarea>
-            <button class="pm-stop" data-action="abort" type="button" title="停止生成" aria-label="停止生成" hidden>■</button>
-            <button class="pm-send" type="submit" title="发送" aria-label="发送">↵</button>
+            <div class="pm-composer-main">
+              <textarea rows="1" aria-label="向 BrowserMate Agent 下达任务" placeholder="描述你想让 Agent 在当前页面完成的任务..."></textarea>
+              <button class="pm-send" type="submit" title="发送" aria-label="发送">↑</button>
+              <button class="pm-stop" data-action="abort" type="button" title="停止生成" aria-label="停止生成" hidden>■</button>
+            </div>
+            <div class="pm-composer-footer">
+              <div class="pm-footer-left">
+                <button class="pm-tool" data-action="refresh" type="button" title="刷新页面内容" aria-label="刷新页面内容">+</button>
+                <div class="pm-permission-wrap">
+                  <button class="pm-permission" data-action="toggle-permission-menu" type="button" title="切换 Agent 权限" aria-label="切换 Agent 权限"></button>
+                  <div class="pm-permission-menu" hidden>
+                    <button class="pm-permission-option" data-action="set-permission" data-permission="default" type="button">
+                      <span>默认权限</span>
+                      <b aria-hidden="true">✓</b>
+                    </button>
+                    <button class="pm-permission-option" data-action="set-permission" data-permission="autoReview" type="button">
+                      <span>自动审查</span>
+                      <b aria-hidden="true">✓</b>
+                    </button>
+                    <button class="pm-permission-option" data-action="set-permission" data-permission="fullAccess" type="button">
+                      <span>完全访问权限</span>
+                      <b aria-hidden="true">✓</b>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <span class="pm-agent-label">Agent</span>
+            </div>
           </div>
           <div class="pm-status" role="status" aria-live="polite"></div>
         </form>
@@ -147,11 +157,12 @@
     state.quoteBody = shadow.querySelector(".pm-quote p");
     state.contextMeta = shadow.querySelector(".pm-meta");
     state.permissionBadge = shadow.querySelector(".pm-permission");
+    state.permissionMenu = shadow.querySelector(".pm-permission-menu");
     state.sendButton = shadow.querySelector(".pm-send");
     state.stopButton = shadow.querySelector(".pm-stop");
 
     loadRuntimeSettings().catch(handleRuntimeFailure);
-    addMessage("assistant", "我已读取当前页面。你可以直接提问，也可以让我作为浏览器 Agent 操作当前网页。");
+    addMessage("assistant", "我已读取当前页面。输入你想让我完成的页面任务即可。");
     shadow.querySelector(".pm-toggle").addEventListener("click", openPanel);
     shadow.querySelector(".pm-form").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -233,7 +244,7 @@
         if (message.agentMode) {
           enterAgentComposeMode();
         } else if (message.question) {
-          handleAgentSubmit(message.question).catch(handleRuntimeFailure);
+          askPage(message.question).catch(handleRuntimeFailure);
         } else {
           state.textarea.focus();
         }
@@ -299,20 +310,6 @@
     });
   }
 
-  async function cyclePermissionMode() {
-    const modes = ["default", "autoReview", "fullAccess"];
-    const current = getAgentPermissionMode();
-    const next = modes[(modes.indexOf(current) + 1) % modes.length];
-
-    state.settings = {
-      ...(state.settings || {}),
-      agentPermissionMode: next,
-    };
-    await chrome.storage.sync.set({ agentPermissionMode: next });
-    updatePermissionBadge();
-    setStatus(`Agent 权限已切换为：${AGENT_PERMISSION_MODES[next].label}`);
-  }
-
   function getAgentPermissionMode() {
     return normalizeAgentPermissionMode(state.settings?.agentPermissionMode);
   }
@@ -325,8 +322,12 @@
     if (!state.permissionBadge) return;
     const mode = getAgentPermissionMode();
     const config = AGENT_PERMISSION_MODES[mode];
-    state.permissionBadge.textContent = `${config.label} · ${config.description}`;
+    state.permissionBadge.textContent = `${config.label}⌄`;
     state.permissionBadge.dataset.mode = mode;
+    state.permissionBadge.setAttribute("aria-expanded", String(!state.permissionMenu?.hidden));
+    state.root.querySelectorAll(".pm-permission-option").forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.permission === mode);
+    });
   }
 
   function observeUrlChanges() {
@@ -408,10 +409,15 @@
 
   function handleClick(event) {
     const button = event.target.closest("button");
-    if (!button) return;
+    if (!button) {
+      closePermissionMenu();
+      return;
+    }
 
     const action = button.dataset.action;
-    const prompt = button.dataset.prompt;
+    if (!["toggle-permission-menu", "set-permission"].includes(action)) {
+      closePermissionMenu();
+    }
 
     if (action === "close") closePanel();
     if (action === "clear") clearConversation();
@@ -421,11 +427,11 @@
     if (action === "options") {
       safeSendMessage({ type: "BROWSERMATE_OPEN_OPTIONS" }).catch(handleRuntimeFailure);
     }
-    if (action === "cycle-permission") {
-      cyclePermissionMode().catch(handleRuntimeFailure);
+    if (action === "toggle-permission-menu") {
+      togglePermissionMenu();
     }
-    if (action === "agent-mode") {
-      enterAgentComposeMode();
+    if (action === "set-permission") {
+      setPermissionMode(button.dataset.permission).catch(handleRuntimeFailure);
     }
     if (action === "execute-plan") {
       executeActivePlan().catch(handleRuntimeFailure);
@@ -436,22 +442,30 @@
     if (action === "retry" && state.lastRequest) {
       retryLastRequest().catch(handleRuntimeFailure);
     }
-    if (prompt) {
-      handleQuickPrompt(prompt).catch(handleRuntimeFailure);
-    }
   }
 
-  async function handleQuickPrompt(prompt) {
-    const question = QUICK_PROMPTS[prompt];
-    if (!question) return;
+  function togglePermissionMenu() {
+    if (!state.permissionMenu) return;
+    state.permissionMenu.hidden = !state.permissionMenu.hidden;
+    updatePermissionBadge();
+  }
 
-    if ((prompt === "explain" || prompt === "translate") && !state.quoteText && !getSelectedText()) {
-      setStatus("请先在网页中选中一段内容。");
-      state.textarea.focus();
-      return;
-    }
+  function closePermissionMenu() {
+    if (!state.permissionMenu || state.permissionMenu.hidden) return;
+    state.permissionMenu.hidden = true;
+    updatePermissionBadge();
+  }
 
-    await askPage(question);
+  async function setPermissionMode(value) {
+    const next = normalizeAgentPermissionMode(value);
+    state.settings = {
+      ...(state.settings || {}),
+      agentPermissionMode: next,
+    };
+    await chrome.storage.sync.set({ agentPermissionMode: next });
+    closePermissionMenu();
+    updatePermissionBadge();
+    setStatus(`Agent 权限已切换为：${AGENT_PERMISSION_MODES[next].label}`);
   }
 
   function enterAgentComposeMode() {
@@ -464,9 +478,9 @@
   }
 
   function resetComposeMode() {
-    state.composeMode = "auto";
-    state.textarea.placeholder = "提问，或让 Agent 操作当前网页...";
-    persistPanelState({ agentMode: false });
+    state.composeMode = "agent";
+    state.textarea.placeholder = "描述你想让 Agent 在当前页面完成的任务...";
+    persistPanelState({ agentMode: true });
   }
 
   async function retryLastRequest() {
@@ -668,7 +682,7 @@
     return {
       auto: true,
       requiresConfirmation: false,
-      reason: mode === "fullAccess" ? "完全权限：Agent 将自动执行支持的页面动作。" : "自动审查：低风险动作将自动执行。",
+      reason: mode === "fullAccess" ? "完全访问权限：Agent 将自动执行支持的页面动作。" : "自动审查：低风险动作将自动执行。",
     };
   }
 
@@ -1900,8 +1914,8 @@
       }
 
       .pm-icon,
-      .pm-chip,
       .pm-inline-action,
+      .pm-tool,
       .pm-send,
       .pm-stop {
         border-radius: 8px;
@@ -1920,8 +1934,8 @@
       }
 
       .pm-icon:hover,
-      .pm-chip:hover,
       .pm-inline-action:hover,
+      .pm-tool:hover,
       .pm-send:hover,
       .pm-stop:hover {
         border-color: rgba(201, 110, 61, 0.65);
@@ -1943,32 +1957,6 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-      }
-
-      .pm-permission {
-        flex: 0 0 auto;
-        border: 1px solid var(--pm-line);
-        border-radius: 999px;
-        background: #fffaf0;
-        color: #4d5a55;
-        font-size: 11px;
-        font-weight: 800;
-        line-height: 1.2;
-        max-width: 178px;
-        overflow: hidden;
-        padding: 4px 8px;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .pm-permission[data-mode="autoReview"] {
-        border-color: rgba(201, 110, 61, 0.55);
-        color: #8a5734;
-      }
-
-      .pm-permission[data-mode="fullAccess"] {
-        border-color: rgba(155, 61, 43, 0.45);
-        color: var(--pm-danger);
       }
 
       .pm-chat,
@@ -2194,24 +2182,8 @@
       }
 
       .pm-form {
-        padding: 10px;
-      }
-
-      .pm-quick-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-bottom: 8px;
-      }
-
-      .pm-chip {
-        min-height: 28px;
-        border: 1px solid var(--pm-line);
-        background: #fffaf0;
-        color: #3d4947;
-        font-size: 12px;
-        font-weight: 750;
-        padding: 4px 10px;
+        border-radius: 16px;
+        padding: 8px;
       }
 
       .pm-quote {
@@ -2259,32 +2231,38 @@
       }
 
       .pm-composer {
-        display: flex;
-        align-items: flex-end;
+        position: relative;
+        display: grid;
         gap: 6px;
-        border: 1px solid #cfc5b4;
-        border-radius: 8px;
+        border: 1px solid #ded6c9;
+        border-radius: 16px;
         background: #fff;
-        padding: 3px;
+        padding: 6px;
       }
 
       .pm-composer:focus-within {
-        border-color: var(--pm-accent);
-        box-shadow: 0 0 0 3px rgba(201, 110, 61, 0.18);
+        border-color: rgba(201, 110, 61, 0.58);
+        box-shadow: 0 0 0 3px rgba(201, 110, 61, 0.12);
+      }
+
+      .pm-composer-main {
+        display: flex;
+        align-items: flex-end;
+        gap: 8px;
       }
 
       textarea {
         width: 100%;
-        min-height: 38px;
+        min-height: 54px;
         max-height: 132px;
         resize: none;
         border: 0;
         background: transparent;
         color: var(--pm-ink);
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.5;
         outline: none;
-        padding: 9px 8px;
+        padding: 10px 8px 4px;
       }
 
       textarea::placeholder {
@@ -2294,12 +2272,14 @@
       .pm-send,
       .pm-stop {
         flex: 0 0 auto;
-        width: 34px;
-        height: 34px;
-        margin: 2px;
+        width: 36px;
+        height: 36px;
+        margin: 2px 0 3px;
         border: 1px solid var(--pm-brand);
+        border-radius: 50%;
         background: var(--pm-brand);
         color: #fff;
+        font-size: 18px;
         font-weight: 800;
       }
 
@@ -2315,7 +2295,125 @@
 
       .pm-status {
         min-height: 18px;
-        padding: 7px 2px 0;
+        padding: 5px 2px 0;
+      }
+
+      .pm-composer-footer {
+        display: flex;
+        min-height: 28px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 0 2px 1px;
+      }
+
+      .pm-footer-left {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .pm-tool {
+        display: grid;
+        width: 28px;
+        height: 28px;
+        place-items: center;
+        border: 0;
+        border-radius: 50%;
+        background: transparent;
+        color: #7a827f;
+        font-size: 22px;
+        line-height: 1;
+        padding: 0;
+      }
+
+      .pm-permission-wrap {
+        position: relative;
+      }
+
+      .pm-permission {
+        display: inline-flex;
+        max-width: 170px;
+        align-items: center;
+        border: 0;
+        background: transparent;
+        color: #4d5a55;
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1.2;
+        overflow: hidden;
+        padding: 4px 2px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .pm-permission[data-mode="autoReview"] {
+        color: #8a5734;
+      }
+
+      .pm-permission[data-mode="fullAccess"] {
+        color: var(--pm-danger);
+      }
+
+      .pm-permission-menu {
+        position: absolute;
+        bottom: calc(100% + 8px);
+        left: -2px;
+        display: grid;
+        min-width: 150px;
+        overflow: hidden;
+        border: 1px solid #e2d8c8;
+        border-radius: 12px;
+        background: #fffdf7;
+        box-shadow: 0 14px 34px rgba(31, 37, 40, 0.18);
+        padding: 6px;
+        z-index: 2;
+      }
+
+      .pm-permission-menu[hidden] {
+        display: none;
+      }
+
+      .pm-permission-option {
+        display: flex;
+        min-height: 30px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: #2f3b3a;
+        font-size: 12px;
+        line-height: 1.2;
+        padding: 6px 8px;
+        text-align: left;
+      }
+
+      .pm-permission-option:hover,
+      .pm-permission-option.is-active {
+        background: #f6efe3;
+      }
+
+      .pm-permission-option b {
+        visibility: hidden;
+        color: var(--pm-brand);
+        font-size: 12px;
+      }
+
+      .pm-permission-option.is-active b {
+        visibility: visible;
+      }
+
+      .pm-agent-label {
+        flex: 0 0 auto;
+        border-radius: 8px;
+        background: #f2eee7;
+        color: #6a706d;
+        font-size: 12px;
+        line-height: 1.2;
+        padding: 5px 8px;
       }
 
       @keyframes pm-pulse {
@@ -2341,8 +2439,8 @@
         .pm-toggle,
         .pm-panel,
         .pm-icon,
-        .pm-chip,
         .pm-inline-action,
+        .pm-tool,
         .pm-send,
         .pm-stop {
           transition: none;
@@ -2350,8 +2448,8 @@
 
         .pm-toggle:hover,
         .pm-icon:hover,
-        .pm-chip:hover,
         .pm-inline-action:hover,
+        .pm-tool:hover,
         .pm-send:hover,
         .pm-stop:hover {
           transform: none;

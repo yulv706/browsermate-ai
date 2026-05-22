@@ -30,7 +30,7 @@ BrowserMate AI supports three page-action permission modes:
 
 - Default: every action plan requires confirmation.
 - Auto review: low-risk actions can run automatically, while sensitive actions still require confirmation.
-- Full access: supported page actions can run automatically, while hard-blocked high-risk actions remain blocked.
+- Full access: supported page actions can run automatically, while hard-blocked high-risk actions remain blocked. The sidebar labels this mode as "完全访问权限".
 
 The extension does not automate password fields or file inputs.
 
