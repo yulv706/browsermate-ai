@@ -27,7 +27,9 @@
     "[role='radio']",
     "[role='switch']",
     "[role='tab']",
-    "[contenteditable='true']",
+    "[role='textbox']",
+    "[role='searchbox']",
+    "[contenteditable]",
     "[tabindex]:not([tabindex='-1'])",
   ];
   const AGENT_PERMISSION_MODES = {
@@ -1152,7 +1154,7 @@
   function collectActionContext() {
     const elements = [];
     const seen = new Set();
-    const candidates = getActionElementCandidates();
+    const candidates = rankActionElementCandidates(getActionElementCandidates());
 
     for (const element of candidates) {
       if (elements.length >= MAX_ACTION_ELEMENTS) break;
@@ -1176,6 +1178,7 @@
         value: getActionElementValue(element),
         placeholder: limitText(element.getAttribute("placeholder") || "", 100),
         options: getSelectOptions(element),
+        hints: getActionElementHints(element),
         disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
         visible: isElementInViewport(rect),
         x: Math.round(rect.left + rect.width / 2),
@@ -1188,6 +1191,44 @@
 
   function getActionElementCandidates() {
     return ACTION_ELEMENT_SELECTORS.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
+  }
+
+  function rankActionElementCandidates(candidates) {
+    return candidates
+      .map((element, index) => ({ element, index, score: scoreActionCandidatePriority(element) }))
+      .sort((a, b) => b.score - a.score || a.index - b.index)
+      .map((entry) => entry.element);
+  }
+
+  function scoreActionCandidatePriority(element) {
+    if (!element) return 0;
+
+    const rect = element.getBoundingClientRect();
+    const label = getActionElementLabel(element).toLowerCase();
+    const attrs = normalizeText(
+      [
+        element.id,
+        element.className,
+        element.getAttribute("name"),
+        element.getAttribute("type"),
+        element.getAttribute("role"),
+        element.getAttribute("placeholder"),
+        element.getAttribute("aria-label"),
+        element.getAttribute("title"),
+      ].join(" "),
+    ).toLowerCase();
+    const text = `${label} ${attrs}`;
+    let score = 0;
+
+    if (isSearchInputElement(element)) score += 10000;
+    if (isSearchSubmitElement(element)) score += 9000;
+    if (/search|搜索|搜一下|查询|关键词/.test(text)) score += 5000;
+    if (isElementInViewport(rect)) score += 1000;
+    if (rect.top >= 0 && rect.top < Math.max(260, window.innerHeight * 0.35)) score += 700;
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName) || element.isContentEditable) score += 250;
+    if (["BUTTON", "A"].includes(element.tagName)) score += 120;
+
+    return score;
   }
 
   function isActionableElement(element) {
@@ -1209,7 +1250,69 @@
     );
   }
 
+  function isSearchInputElement(element) {
+    if (!element) return false;
+
+    const tag = element.tagName;
+    const role = normalizeText(element.getAttribute("role")).toLowerCase();
+    const type = normalizeText(element.getAttribute("type")).toLowerCase();
+    const text = normalizeText(
+      [
+        element.id,
+        element.className,
+        element.getAttribute("name"),
+        element.getAttribute("placeholder"),
+        element.getAttribute("aria-label"),
+        element.getAttribute("title"),
+        role,
+        type,
+      ].join(" "),
+    ).toLowerCase();
+
+    return (
+      type === "search" ||
+      role === "searchbox" ||
+      /search|搜索|搜一下|查询|关键词/.test(text) ||
+      ((tag === "INPUT" || tag === "TEXTAREA" || element.isContentEditable || role === "textbox") &&
+        element.closest("form, [role='search'], [class*='search'], [id*='search'], [class*='Search'], [id*='Search']"))
+    );
+  }
+
+  function isSearchSubmitElement(element) {
+    if (!element) return false;
+
+    const text = normalizeText(
+      [
+        getRawActionElementLabel(element),
+        element.id,
+        element.className,
+        element.getAttribute("name"),
+        element.getAttribute("type"),
+        element.getAttribute("role"),
+        element.getAttribute("aria-label"),
+        element.getAttribute("title"),
+      ].join(" "),
+    ).toLowerCase();
+    if (/search|搜索|搜一下|查询/.test(text)) return true;
+
+    const insideSearch = element.closest("form, [role='search'], [class*='search'], [id*='search'], [class*='Search'], [id*='Search']");
+    if (!insideSearch) return false;
+
+    return (
+      element.matches("button, [role='button'], input[type='submit'], input[type='button'], a[href]") ||
+      Boolean(element.querySelector("svg, [class*='icon'], [class*='Icon']"))
+    );
+  }
+
   function getActionElementLabel(element) {
+    const label = getRawActionElementLabel(element);
+    if (label) return label;
+    if (isSearchInputElement(element)) return "搜索输入框";
+    if (isSearchSubmitElement(element)) return "搜索";
+    return "";
+  }
+
+  function getRawActionElementLabel(element) {
     const aria = element.getAttribute("aria-label") || element.getAttribute("title") || element.getAttribute("alt");
     const labelledBy = element.getAttribute("aria-labelledby");
     const labelledText = labelledBy
@@ -1242,6 +1345,15 @@
       .slice(0, 30)
       .map((option) => normalizeText(option.textContent || option.value))
       .filter(Boolean);
+  }
+
+  function getActionElementHints(element) {
+    const hints = [];
+    if (isSearchInputElement(element)) hints.push("search-input");
+    if (isSearchSubmitElement(element)) hints.push("search-submit");
+    if (element.closest("form")) hints.push("inside-form");
+    if (element.isContentEditable || element.getAttribute("role") === "textbox") hints.push("editable");
+    return hints;
   }
 
   function isElementInViewport(rect) {
@@ -1426,6 +1538,7 @@
       select: "选择",
       check: "勾选",
       uncheck: "取消勾选",
+      press: "按键",
       scroll: "滚动",
       wait: "等待",
     };
@@ -1463,6 +1576,11 @@
 
     if (step.action === "type") {
       setElementValue(element, step.value || "");
+      return;
+    }
+
+    if (step.action === "press") {
+      pressElementKey(element, step.value || "Enter");
       return;
     }
 
@@ -1668,9 +1786,45 @@
       throw new Error("目标元素不是可输入控件。");
     }
 
-    element.value = value;
+    setNativeInputValue(element, value);
     element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
     element.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function setNativeInputValue(element, value) {
+    const prototype = element.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+
+    if (descriptor?.set) {
+      descriptor.set.call(element, value);
+    } else {
+      element.value = value;
+    }
+  }
+
+  function pressElementKey(element, value) {
+    const key = normalizeText(value) || "Enter";
+    const eventInit = {
+      key,
+      code: key === "Enter" ? "Enter" : key,
+      bubbles: true,
+      cancelable: true,
+    };
+
+    element.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+    element.dispatchEvent(new KeyboardEvent("keypress", eventInit));
+    element.dispatchEvent(new KeyboardEvent("keyup", eventInit));
+
+    if (key === "Enter") {
+      const form = element.closest("form");
+      if (form) {
+        if (typeof form.requestSubmit === "function") {
+          form.requestSubmit();
+        } else {
+          form.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+        }
+      }
+    }
   }
 
   function setSelectValue(element, value) {

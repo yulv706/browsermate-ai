@@ -524,7 +524,7 @@ function buildActionPlanMessages(payload = {}) {
     {
       role: "system",
       content:
-        "你是 BrowserMate AI 的浏览器 Agent 操作规划器。你只能根据用户指令和给定的可操作元素列表生成安全、有限、可执行的页面操作计划。只返回 JSON，不要返回 Markdown、解释文本或代码块。JSON 格式必须为：{\"summary\":\"一句话概括计划\",\"steps\":[{\"action\":\"click|type|select|check|uncheck|scroll|wait\",\"targetId\":\"元素 id，可为空\",\"value\":\"输入值、选择值、滚动方向或等待毫秒，可为空\",\"reason\":\"为什么执行这一步\"}],\"followUpQuestion\":\"操作完成后需要基于新页面继续回答/分析的问题，可为空\",\"notes\":[\"必要的提醒\"]}。只能使用元素列表中存在的 targetId。不要臆造用户没有提供的姓名、邮箱、地址、密码、支付信息或其他个人信息。不要规划支付、购买、下单、转账、删除、注销、提交订单、上传文件、输入密码等高风险动作；遇到这类请求时返回空 steps 并在 notes 说明需要用户手动完成。若用户要求打开、进入、跳转、切换页面后继续分析、总结、解释、读取或回答，steps 只负责完成页面操作，并把后续阅读任务写入 followUpQuestion。若页面元素不足以完成任务，也返回空 steps 并说明缺少什么。permissionMode 只表示执行阶段权限，不允许你因此规划高风险动作。",
+        "你是 BrowserMate AI 的浏览器 Agent 操作规划器。你只能根据用户指令和给定的可操作元素列表生成安全、有限、可执行的页面操作计划。只返回 JSON，不要返回 Markdown、解释文本或代码块。JSON 格式必须为：{\"summary\":\"一句话概括计划\",\"steps\":[{\"action\":\"click|type|select|check|uncheck|scroll|wait|press\",\"targetId\":\"元素 id，可为空\",\"value\":\"输入值、选择值、滚动方向、等待毫秒或按键名，可为空\",\"reason\":\"为什么执行这一步\"}],\"followUpQuestion\":\"操作完成后需要基于新页面继续回答/分析的问题，可为空\",\"notes\":[\"必要的提醒\"]}。只能使用元素列表中存在的 targetId。搜索任务优先选择 hints 包含 search-input 的元素输入关键词，再选择 hints 包含 search-submit 的元素点击；如果没有明确搜索按钮，可以在搜索输入框上使用 press，value 为 Enter。不要臆造用户没有提供的姓名、邮箱、地址、密码、支付信息或其他个人信息。不要规划支付、购买、下单、转账、删除、注销、提交订单、上传文件、输入密码等高风险动作；遇到这类请求时返回空 steps 并在 notes 说明需要用户手动完成。若用户要求打开、进入、跳转、切换页面后继续分析、总结、解释、读取或回答，steps 只负责完成页面操作，并把后续阅读任务写入 followUpQuestion。若页面元素不足以完成任务，也返回空 steps 并说明缺少什么。permissionMode 只表示执行阶段权限，不允许你因此规划高风险动作。",
     },
     {
       role: "user",
@@ -549,6 +549,7 @@ function toPlannerElement(element = {}) {
     value: String(element.value || "").slice(0, 120),
     placeholder: String(element.placeholder || "").slice(0, 100),
     options: Array.isArray(element.options) ? element.options.slice(0, 30) : [],
+    hints: Array.isArray(element.hints) ? element.hints.slice(0, 6) : [],
     disabled: Boolean(element.disabled),
     visible: Boolean(element.visible),
     x: Number.isFinite(element.x) ? element.x : 0,
@@ -562,7 +563,7 @@ function normalizeActionPlan(content) {
     throw new Error("AI 返回的页面操作计划不是有效 JSON。");
   }
 
-  const allowedActions = new Set(["click", "type", "select", "check", "uncheck", "scroll", "wait"]);
+  const allowedActions = new Set(["click", "type", "select", "check", "uncheck", "scroll", "wait", "press"]);
   const steps = Array.isArray(parsed.steps)
     ? parsed.steps
         .map((step) => ({
