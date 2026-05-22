@@ -13,6 +13,8 @@ The extension stores the following settings through `chrome.storage.sync`:
 - Agent permission mode
 - custom system prompt
 
+The extension also keeps short-lived per-tab sidebar state in browser session storage so the Agent panel can recover after page actions trigger navigation. This state can include whether the panel was open, whether an Agent action was in progress, the last known URL, and a short action summary. It is stored locally by the browser and expires automatically.
+
 These settings are stored by the browser and may sync through the user's browser account if sync is enabled.
 
 ## Data Sent to AI Services

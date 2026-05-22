@@ -4,7 +4,7 @@ BrowserMate AI uses broad page access because its core feature is answering ques
 
 ## `storage`
 
-Stores user settings, including endpoint URL, API Key, model, temperature, Agent permission mode, and system prompt.
+Stores user settings, including endpoint URL, API Key, model, temperature, Agent permission mode, and system prompt. BrowserMate AI also uses browser session storage for short-lived per-tab sidebar state so the Agent panel can recover after navigation triggered by page actions.
 
 ## `activeTab`
 

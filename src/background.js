@@ -9,6 +9,15 @@ const DEFAULT_SETTINGS = {
 };
 
 const AI_REQUEST_TIMEOUT_MS = 90000;
+const TAB_SESSION_TTL_MS = 30 * 60 * 1000;
+const TAB_SESSION_KEY_PREFIX = "browsermate-tab-session:";
+const tabSessionFallback = new Map();
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  removeTabSession(tabId).catch((error) => {
+    console.warn("BrowserMate AI failed to clear tab session:", error);
+  });
+});
 
 chrome.commands.onCommand.addListener(async (command) => {
   if (command !== "toggle-sidebar") return;
@@ -23,6 +32,20 @@ chrome.commands.onCommand.addListener(async (command) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "BROWSERMATE_GET_PANEL_STATE") {
+    getTabSession(sender.tab?.id)
+      .then((session) => sendResponse({ ok: true, session }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === "BROWSERMATE_PANEL_STATE") {
+    updateTabSession(sender.tab?.id, message.payload)
+      .then((session) => sendResponse({ ok: true, session }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message?.type === "BROWSERMATE_AI_REQUEST") {
     completeWithAI(message.payload)
       .then((result) => sendResponse({ ok: true, result }))
@@ -104,6 +127,77 @@ chrome.runtime.onConnect.addListener((port) => {
 async function getSettings() {
   const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
   return { ...DEFAULT_SETTINGS, ...settings };
+}
+
+async function getTabSession(tabId) {
+  if (!tabId) return {};
+
+  const key = getTabSessionKey(tabId);
+  const session = await readTabSession(key);
+  if (!session?.updatedAt || Date.now() - session.updatedAt > TAB_SESSION_TTL_MS) {
+    await removeTabSession(tabId);
+    return {};
+  }
+
+  return session;
+}
+
+async function updateTabSession(tabId, payload = {}) {
+  if (!tabId) return {};
+
+  const current = await getTabSession(tabId).catch(() => ({}));
+  const next = {
+    ...current,
+    ...normalizeTabSessionPayload(payload),
+    updatedAt: Date.now(),
+  };
+
+  await writeTabSession(getTabSessionKey(tabId), next);
+  return next;
+}
+
+async function removeTabSession(tabId) {
+  if (!tabId) return;
+
+  const key = getTabSessionKey(tabId);
+  tabSessionFallback.delete(key);
+  if (chrome.storage?.session) {
+    await chrome.storage.session.remove(key);
+  }
+}
+
+function normalizeTabSessionPayload(payload = {}) {
+  const normalized = {};
+
+  if ("panelOpen" in payload) normalized.panelOpen = Boolean(payload.panelOpen);
+  if ("agentMode" in payload) normalized.agentMode = Boolean(payload.agentMode);
+  if ("actionActive" in payload) normalized.actionActive = Boolean(payload.actionActive);
+  if ("restoreUntil" in payload) normalized.restoreUntil = Math.max(0, Number(payload.restoreUntil) || 0);
+  if ("lastKnownUrl" in payload) normalized.lastKnownUrl = String(payload.lastKnownUrl || "").slice(0, 1000);
+  if ("lastActionSummary" in payload) normalized.lastActionSummary = String(payload.lastActionSummary || "").slice(0, 240);
+  if ("refreshReason" in payload) normalized.refreshReason = String(payload.refreshReason || "").slice(0, 80);
+
+  return normalized;
+}
+
+async function readTabSession(key) {
+  if (chrome.storage?.session) {
+    const data = await chrome.storage.session.get(key);
+    return data[key] || {};
+  }
+
+  return tabSessionFallback.get(key) || {};
+}
+
+async function writeTabSession(key, session) {
+  tabSessionFallback.set(key, session);
+  if (chrome.storage?.session) {
+    await chrome.storage.session.set({ [key]: session });
+  }
+}
+
+function getTabSessionKey(tabId) {
+  return `${TAB_SESSION_KEY_PREFIX}${tabId}`;
 }
 
 async function completeWithAI(payload) {

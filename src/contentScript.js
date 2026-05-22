@@ -7,6 +7,8 @@
   const MAX_SELECTION_TEXT = 4000;
   const MAX_ACTION_ELEMENTS = 80;
   const PAGE_CACHE_TTL_MS = 45000;
+  const PANEL_RESTORE_MS = 120000;
+  const POST_ACTION_REFRESH_DELAYS = [200, 650, 1400, 2800];
   const AGENT_PERMISSION_MODES = {
     default: {
       label: "默认权限",
@@ -55,7 +57,10 @@
     pageCache: null,
     viewportCache: null,
     mutationObserver: null,
+    observedBody: null,
     mutationRefreshTimer: 0,
+    hostWatchTimer: 0,
+    restoreSession: null,
   };
 
   init();
@@ -66,7 +71,11 @@
     observeRuntimeSettings();
     observeUrlChanges();
     observePageChanges();
+    observeAssistantHost();
     refreshContext();
+    restorePanelSession().catch(() => {
+      // Session restore is best-effort and should not interrupt normal page use.
+    });
   }
 
   function createAssistant() {
@@ -242,6 +251,40 @@
     updatePermissionBadge();
   }
 
+  async function restorePanelSession() {
+    const response = await safeSendMessage({ type: "BROWSERMATE_GET_PANEL_STATE" });
+    if (!response?.ok) return;
+
+    const session = response.session || {};
+    state.restoreSession = session;
+
+    if (session.panelOpen || session.actionActive || Number(session.restoreUntil) > Date.now()) {
+      openPanel({ restore: true });
+      scheduleContextRefresh("restore");
+      const summary = session.lastActionSummary ? `：${session.lastActionSummary}` : "";
+      setStatus(`已恢复 Agent 会话${summary}`);
+    }
+
+    if (session.agentMode) {
+      state.composeMode = "agent";
+      state.textarea.placeholder = "描述你想让 Agent 在当前页面完成的任务...";
+    }
+  }
+
+  function persistPanelState(payload = {}) {
+    safeSendMessage({
+      type: "BROWSERMATE_PANEL_STATE",
+      payload: {
+        lastKnownUrl: location.href,
+        ...payload,
+        panelOpen: isPanelOpen(),
+        agentMode: state.composeMode === "agent",
+      },
+    }).catch(() => {
+      // The panel state is best-effort; the Agent can still work without persistence.
+    });
+  }
+
   function observeRuntimeSettings() {
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== "sync" || !changes.agentPermissionMode) return;
@@ -294,27 +337,49 @@
       lastUrl = location.href;
       invalidatePageCache();
       clearQuote();
-      setTimeout(() => refreshContext(true), 400);
+      persistPanelState({
+        actionActive: state.restoreSession?.actionActive || false,
+        restoreUntil: state.restoreSession?.restoreUntil || 0,
+        refreshReason: "url-change",
+      });
+      scheduleContextRefresh("url-change");
     }, 1000);
   }
 
   function observePageChanges() {
-    if (!document.body || state.mutationObserver) return;
+    if (!document.body || state.observedBody === document.body) return;
+
+    state.mutationObserver?.disconnect();
+    state.observedBody = document.body;
 
     state.mutationObserver = new MutationObserver((mutations) => {
       if (!mutations.some(isContentMutation)) return;
       invalidatePageCache();
       clearTimeout(state.mutationRefreshTimer);
       state.mutationRefreshTimer = setTimeout(() => {
-        if (state.host.classList.contains("is-open")) refreshContext();
+        if (isPanelOpen()) refreshContext();
       }, 500);
     });
 
-    state.mutationObserver.observe(document.body, {
+    state.mutationObserver.observe(state.observedBody, {
       childList: true,
       subtree: true,
       characterData: true,
     });
+  }
+
+  function observeAssistantHost() {
+    state.hostWatchTimer = setInterval(() => {
+      observePageChanges();
+      if (!state.host || state.host.isConnected) return;
+
+      document.documentElement.appendChild(state.host);
+      if (isPanelOpen()) {
+        state.root.querySelector(".pm-panel").setAttribute("aria-hidden", "false");
+      }
+      scheduleContextRefresh("host-restore");
+      persistPanelState({ panelOpen: isPanelOpen(), refreshReason: "host-restore" });
+    }, 1000);
   }
 
   function isContentMutation(mutation) {
@@ -327,6 +392,18 @@
   function invalidatePageCache() {
     state.pageCache = null;
     state.viewportCache = null;
+  }
+
+  function scheduleContextRefresh(reason = "page-change") {
+    invalidatePageCache();
+    if (reason === "url-change") clearQuote();
+
+    POST_ACTION_REFRESH_DELAYS.forEach((delayMs, index) => {
+      setTimeout(() => {
+        if (!document.body) return;
+        refreshContext(index === POST_ACTION_REFRESH_DELAYS.length - 1);
+      }, delayMs);
+    });
   }
 
   function handleClick(event) {
@@ -383,11 +460,13 @@
     state.textarea.placeholder = "描述你想让 Agent 在当前页面完成的任务...";
     state.textarea.focus();
     setStatus(`Agent 模式 · ${AGENT_PERMISSION_MODES[getAgentPermissionMode()].label}`);
+    persistPanelState({ agentMode: true });
   }
 
   function resetComposeMode() {
     state.composeMode = "auto";
     state.textarea.placeholder = "提问，或让 Agent 操作当前网页...";
+    persistPanelState({ agentMode: false });
   }
 
   async function retryLastRequest() {
@@ -609,6 +688,20 @@
 
     setStatus("正在执行页面操作...");
     addMessage("assistant", options.auto ? "Agent 正在自动执行页面操作计划。" : "开始执行已确认的页面操作计划。");
+    const restoreUntil = Date.now() + PANEL_RESTORE_MS;
+    state.restoreSession = {
+      ...(state.restoreSession || {}),
+      actionActive: true,
+      restoreUntil,
+      lastActionSummary: plan.summary || "",
+    };
+    persistPanelState({
+      panelOpen: true,
+      actionActive: true,
+      restoreUntil,
+      lastActionSummary: plan.summary || "",
+      refreshReason: "action-start",
+    });
 
     for (let index = 0; index < plan.steps.length; index += 1) {
       const step = plan.steps[index];
@@ -617,13 +710,30 @@
       await delay(260);
     }
 
+    scheduleContextRefresh("action-complete");
     addMessage("assistant", "页面操作计划已执行完成。");
     state.activePlan = null;
     setStatus("页面操作完成");
+    state.restoreSession = {
+      ...(state.restoreSession || {}),
+      actionActive: false,
+      restoreUntil,
+    };
+    persistPanelState({
+      panelOpen: true,
+      actionActive: false,
+      restoreUntil,
+      refreshReason: "action-complete",
+    });
   }
 
   function discardActivePlan() {
     state.activePlan = null;
+    state.restoreSession = {
+      ...(state.restoreSession || {}),
+      actionActive: false,
+    };
+    persistPanelState({ actionActive: false, restoreUntil: 0 });
     addMessage("assistant", "已取消这份页面操作计划。");
     setStatus("已取消操作计划");
   }
@@ -1512,24 +1622,36 @@
     return document.querySelector(`meta[property="${name}"], meta[name="${name}"]`)?.content || "";
   }
 
-  function openPanel() {
+  function openPanel(options = {}) {
     state.host.classList.add("is-open");
     state.root.querySelector(".pm-panel").setAttribute("aria-hidden", "false");
     refreshContext();
+    if (!options.restore) {
+      persistPanelState({ panelOpen: true });
+    }
     requestAnimationFrame(() => state.textarea.focus());
   }
 
   function closePanel() {
     state.host.classList.remove("is-open");
     state.root.querySelector(".pm-panel").setAttribute("aria-hidden", "true");
+    persistPanelState({
+      panelOpen: false,
+      actionActive: false,
+      restoreUntil: 0,
+    });
   }
 
   function togglePanel() {
-    if (state.host.classList.contains("is-open")) {
+    if (isPanelOpen()) {
       closePanel();
     } else {
       openPanel();
     }
+  }
+
+  function isPanelOpen() {
+    return Boolean(state.host?.classList.contains("is-open"));
   }
 
   function setStatus(message) {
