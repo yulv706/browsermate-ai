@@ -176,6 +176,13 @@ function normalizeTabSessionPayload(payload = {}) {
   if ("lastKnownUrl" in payload) normalized.lastKnownUrl = String(payload.lastKnownUrl || "").slice(0, 1000);
   if ("lastActionSummary" in payload) normalized.lastActionSummary = String(payload.lastActionSummary || "").slice(0, 240);
   if ("refreshReason" in payload) normalized.refreshReason = String(payload.refreshReason || "").slice(0, 80);
+  if ("pendingFollowUp" in payload) normalized.pendingFollowUp = String(payload.pendingFollowUp || "").slice(0, 1000);
+  if ("pendingFollowUpCreatedAt" in payload) {
+    normalized.pendingFollowUpCreatedAt = Math.max(0, Number(payload.pendingFollowUpCreatedAt) || 0);
+  }
+  if ("pendingFollowUpSourceUrl" in payload) {
+    normalized.pendingFollowUpSourceUrl = String(payload.pendingFollowUpSourceUrl || "").slice(0, 1000);
+  }
 
   return normalized;
 }
@@ -470,7 +477,7 @@ function buildActionPlanMessages(payload = {}) {
     {
       role: "system",
       content:
-        "你是 BrowserMate AI 的浏览器 Agent 操作规划器。你只能根据用户指令和给定的可操作元素列表生成安全、有限、可执行的页面操作计划。只返回 JSON，不要返回 Markdown、解释文本或代码块。JSON 格式必须为：{\"summary\":\"一句话概括计划\",\"steps\":[{\"action\":\"click|type|select|check|uncheck|scroll|wait\",\"targetId\":\"元素 id，可为空\",\"value\":\"输入值、选择值、滚动方向或等待毫秒，可为空\",\"reason\":\"为什么执行这一步\"}],\"notes\":[\"必要的提醒\"]}。只能使用元素列表中存在的 targetId。不要臆造用户没有提供的姓名、邮箱、地址、密码、支付信息或其他个人信息。不要规划支付、购买、下单、转账、删除、注销、提交订单、上传文件、输入密码等高风险动作；遇到这类请求时返回空 steps 并在 notes 说明需要用户手动完成。若页面元素不足以完成任务，也返回空 steps 并说明缺少什么。permissionMode 只表示执行阶段权限，不允许你因此规划高风险动作。",
+        "你是 BrowserMate AI 的浏览器 Agent 操作规划器。你只能根据用户指令和给定的可操作元素列表生成安全、有限、可执行的页面操作计划。只返回 JSON，不要返回 Markdown、解释文本或代码块。JSON 格式必须为：{\"summary\":\"一句话概括计划\",\"steps\":[{\"action\":\"click|type|select|check|uncheck|scroll|wait\",\"targetId\":\"元素 id，可为空\",\"value\":\"输入值、选择值、滚动方向或等待毫秒，可为空\",\"reason\":\"为什么执行这一步\"}],\"followUpQuestion\":\"操作完成后需要基于新页面继续回答/分析的问题，可为空\",\"notes\":[\"必要的提醒\"]}。只能使用元素列表中存在的 targetId。不要臆造用户没有提供的姓名、邮箱、地址、密码、支付信息或其他个人信息。不要规划支付、购买、下单、转账、删除、注销、提交订单、上传文件、输入密码等高风险动作；遇到这类请求时返回空 steps 并在 notes 说明需要用户手动完成。若用户要求打开、进入、跳转、切换页面后继续分析、总结、解释、读取或回答，steps 只负责完成页面操作，并把后续阅读任务写入 followUpQuestion。若页面元素不足以完成任务，也返回空 steps 并说明缺少什么。permissionMode 只表示执行阶段权限，不允许你因此规划高风险动作。",
     },
     {
       role: "user",
@@ -524,6 +531,7 @@ function normalizeActionPlan(content) {
   return {
     summary: String(parsed.summary || "页面操作计划").slice(0, 240),
     steps,
+    followUpQuestion: String(parsed.followUpQuestion || parsed.followUp || "").slice(0, 500),
     notes: Array.isArray(parsed.notes) ? parsed.notes.map((note) => String(note).slice(0, 240)).slice(0, 5) : [],
   };
 }

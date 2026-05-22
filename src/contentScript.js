@@ -10,6 +10,8 @@
   const PAGE_CACHE_TTL_MS = 45000;
   const PANEL_RESTORE_MS = 120000;
   const POST_ACTION_REFRESH_DELAYS = [200, 650, 1400, 2800];
+  const FOLLOW_UP_WAIT_MS = 1200;
+  const FOLLOW_UP_TTL_MS = 90000;
   const ACTION_RELOCATION_MIN_SCORE = 0.58;
   const ACTION_RELOCATION_CLEAR_SCORE = 0.78;
   const ACTION_RELOCATION_AMBIGUITY_GAP = 0.08;
@@ -74,6 +76,7 @@
     mutationRefreshTimer: 0,
     hostWatchTimer: 0,
     restoreSession: null,
+    followUpTimer: 0,
   };
 
   init();
@@ -299,6 +302,8 @@
       state.composeMode = "agent";
       state.textarea.placeholder = "描述你想让 Agent 在当前页面完成的任务...";
     }
+
+    schedulePendingFollowUp(session, "restore");
   }
 
   function persistPanelState(payload = {}) {
@@ -310,9 +315,13 @@
         panelOpen: isPanelOpen(),
         agentMode: state.composeMode === "agent",
       },
-    }).catch(() => {
-      // The panel state is best-effort; the Agent can still work without persistence.
-    });
+    })
+      .then((response) => {
+        if (response?.ok) state.restoreSession = response.session || state.restoreSession;
+      })
+      .catch(() => {
+        // The panel state is best-effort; the Agent can still work without persistence.
+      });
   }
 
   function observeRuntimeSettings() {
@@ -363,6 +372,7 @@
         refreshReason: "url-change",
       });
       scheduleContextRefresh("url-change");
+      schedulePendingFollowUp(state.restoreSession, "url-change");
     }, 1000);
   }
 
@@ -378,6 +388,7 @@
       clearTimeout(state.mutationRefreshTimer);
       state.mutationRefreshTimer = setTimeout(() => {
         if (isPanelOpen()) refreshContext();
+        schedulePendingFollowUp(state.restoreSession, "page-change");
       }, 500);
     });
 
@@ -423,6 +434,53 @@
         if (!document.body) return;
         refreshContext(index === POST_ACTION_REFRESH_DELAYS.length - 1);
       }, delayMs);
+    });
+  }
+
+  function schedulePendingFollowUp(session = state.restoreSession, reason = "page-ready") {
+    const question = normalizeText(session?.pendingFollowUp);
+    if (!question || state.streamPort || state.followUpTimer) return;
+
+    const createdAt = Number(session.pendingFollowUpCreatedAt) || 0;
+    if (!createdAt || Date.now() - createdAt > FOLLOW_UP_TTL_MS) {
+      clearPendingFollowUp("expired");
+      return;
+    }
+
+    state.followUpTimer = setTimeout(() => {
+      state.followUpTimer = 0;
+      runPendingFollowUp(reason).catch(handleRuntimeFailure);
+    }, FOLLOW_UP_WAIT_MS);
+  }
+
+  async function runPendingFollowUp(reason = "page-ready") {
+    const question = normalizeText(state.restoreSession?.pendingFollowUp);
+    if (!question || state.streamPort) return;
+
+    clearPendingFollowUp(reason);
+    scheduleContextRefresh("follow-up");
+    await delay(FOLLOW_UP_WAIT_MS);
+    await askPage(question, {
+      system: true,
+      statusMessage: "页面已更新，正在继续分析...",
+      userMessage: `继续分析：${question}`,
+    });
+  }
+
+  function clearPendingFollowUp(reason = "done") {
+    clearTimeout(state.followUpTimer);
+    state.followUpTimer = 0;
+    state.restoreSession = {
+      ...(state.restoreSession || {}),
+      pendingFollowUp: "",
+      pendingFollowUpCreatedAt: 0,
+      pendingFollowUpSourceUrl: "",
+    };
+    persistPanelState({
+      pendingFollowUp: "",
+      pendingFollowUpCreatedAt: 0,
+      pendingFollowUpSourceUrl: "",
+      refreshReason: `follow-up-${reason}`,
     });
   }
 
@@ -559,7 +617,7 @@
     }
   }
 
-  async function askPage(question) {
+  async function askPage(question, options = {}) {
     if (state.streamPort) {
       setStatus("上一条回复仍在生成中，可先停止生成。");
       return;
@@ -577,14 +635,16 @@
 
     openPanel();
     const quotedText = state.quoteText || context.selectedText;
-    addMessage("user", normalizedQuestion, { quote: quotedText });
+    addMessage("user", options.userMessage || normalizedQuestion, { quote: quotedText });
     resetComposeMode();
-    state.textarea.value = "";
-    resizeComposer();
-    clearQuote();
+    if (!options.system) {
+      state.textarea.value = "";
+      resizeComposer();
+      clearQuote();
+    }
     state.pendingMessage = addMessage("assistant", "正在基于当前网页思考...", { pending: true });
     setBusy(true);
-    setStatus("AI 正在回复...");
+    setStatus(options.statusMessage || "AI 正在回复...");
 
     const payload = {
       question: normalizedQuestion,
@@ -725,17 +785,25 @@
     setStatus("正在执行页面操作...");
     addMessage("assistant", options.auto ? "Agent 正在自动执行页面操作计划。" : "开始执行已确认的页面操作计划。");
     const restoreUntil = Date.now() + PANEL_RESTORE_MS;
+    const followUpQuestion = getPlanFollowUpQuestion(plan);
+    const followUpCreatedAt = followUpQuestion ? Date.now() : 0;
     state.restoreSession = {
       ...(state.restoreSession || {}),
       actionActive: true,
       restoreUntil,
       lastActionSummary: plan.summary || "",
+      pendingFollowUp: followUpQuestion,
+      pendingFollowUpCreatedAt: followUpCreatedAt,
+      pendingFollowUpSourceUrl: followUpQuestion ? location.href : "",
     };
     persistPanelState({
       panelOpen: true,
       actionActive: true,
       restoreUntil,
       lastActionSummary: plan.summary || "",
+      pendingFollowUp: followUpQuestion,
+      pendingFollowUpCreatedAt: followUpCreatedAt,
+      pendingFollowUpSourceUrl: followUpQuestion ? location.href : "",
       refreshReason: "action-start",
     });
 
@@ -747,9 +815,12 @@
     }
 
     scheduleContextRefresh("action-complete");
-    addMessage("assistant", "页面操作计划已执行完成。");
+    addMessage(
+      "assistant",
+      followUpQuestion ? "页面操作已完成，正在等待新页面内容并继续分析。" : "页面操作计划已执行完成。",
+    );
     state.activePlan = null;
-    setStatus("页面操作完成");
+    setStatus(followUpQuestion ? "等待页面更新后继续分析..." : "页面操作完成");
     state.restoreSession = {
       ...(state.restoreSession || {}),
       actionActive: false,
@@ -761,6 +832,7 @@
       restoreUntil,
       refreshReason: "action-complete",
     });
+    schedulePendingFollowUp(state.restoreSession, "action-complete");
   }
 
   function discardActivePlan() {
@@ -1286,6 +1358,7 @@
             : "<p>没有生成可执行步骤。</p>"
         }
         ${noteItems ? `<div class="pm-plan-notes"><span>注意</span><ul>${noteItems}</ul></div>` : ""}
+        ${plan.followUpQuestion ? `<p class="pm-plan-follow">操作后继续：${escapeHtml(plan.followUpQuestion)}</p>` : ""}
       </div>
     `;
   }
@@ -1303,6 +1376,10 @@
 
     if (notes.length) {
       lines.push("", "注意：", ...notes.map((note) => `- ${note}`));
+    }
+
+    if (plan.followUpQuestion) {
+      lines.push("", `后续分析：${plan.followUpQuestion}`);
     }
 
     return lines.join("\n");
@@ -1366,6 +1443,24 @@
     if (step.action === "check" || step.action === "uncheck") {
       setCheckedValue(element, step.action === "check");
     }
+  }
+
+  function getPlanFollowUpQuestion(plan) {
+    const explicit = normalizeText(plan?.followUpQuestion);
+    if (explicit) return explicit;
+
+    const summary = normalizeText(`${plan?.summary || ""} ${(plan?.notes || []).join(" ")}`);
+    if (!/(分析|总结|解释|读取|阅读|看看|回答|提取|说明|analy[sz]e|summari[sz]e|explain|read|extract)/i.test(summary)) {
+      return "";
+    }
+
+    if (!(plan?.steps || []).some(isNavigationLikeStep)) return "";
+    return summary || "分析当前页面内容";
+  }
+
+  function isNavigationLikeStep(step) {
+    const text = normalizeText(`${step?.action || ""} ${step?.value || ""} ${step?.reason || ""}`).toLowerCase();
+    return step?.action === "click" || /open|navigate|enter|goto|jump|打开|进入|跳转|查看/.test(text);
   }
 
   function resolveActionElement(elementMeta) {
@@ -2541,6 +2636,18 @@
         color: #8b5736;
         font-size: 11px;
         font-weight: 800;
+      }
+
+      .pm-plan-follow {
+        margin: 0;
+        border: 1px solid #cfe1d9;
+        border-radius: 8px;
+        background: #f2fbf6;
+        color: #31594f;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.45;
+        padding: 7px 8px;
       }
 
       .pm-message-quote {
