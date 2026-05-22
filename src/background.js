@@ -431,11 +431,12 @@ function buildContextMessages(payload = {}) {
   if (payload.pageTitle) lines.push(`网页标题：${payload.pageTitle}`);
   if (payload.pageUrl) lines.push(`网页地址：${payload.pageUrl}`);
   if (payload.selectedText) lines.push(`用户选中的网页内容：\n${payload.selectedText}`);
+  if (payload.relevantText) lines.push(`与用户问题匹配度较高的页面片段：\n${payload.relevantText}`);
   if (payload.viewportText) lines.push(`当前浏览器视口中可见的网页内容（优先使用）：\n${payload.viewportText}`);
   if (payload.pageText) lines.push(`整页正文补充（仅在可见内容不足时参考）：\n${payload.pageText}`);
 
   const context = lines.length
-    ? `以下是从当前网页提取的上下文。优先级从高到低为：用户选中文本、当前可见内容、整页正文补充。\n\n${lines.join("\n\n")}`
+    ? `以下是从当前网页提取的上下文。优先级从高到低为：用户选中文本、与问题相关的页面片段、当前可见内容、整页正文补充。\n\n${lines.join("\n\n")}`
     : "";
   const question = payload.question?.trim() || "请根据当前网页内容回答。";
 
@@ -454,11 +455,12 @@ function buildContextMessages(payload = {}) {
 
 function buildActionPlanMessages(payload = {}) {
   const instruction = String(payload.instruction || "").trim();
-  const elements = Array.isArray(payload.elements) ? payload.elements.slice(0, 80) : [];
+  const elements = Array.isArray(payload.elements) ? payload.elements.slice(0, 80).map(toPlannerElement) : [];
   const pageInfo = {
     title: payload.pageTitle || "",
     url: payload.pageUrl || "",
     visibleText: String(payload.viewportText || "").slice(0, 3000),
+    relevantText: String(payload.relevantText || "").slice(0, 1800),
     selectedText: String(payload.selectedText || "").slice(0, 1200),
     permissionMode: payload.permissionMode || "default",
     elements,
@@ -482,6 +484,22 @@ function buildActionPlanMessages(payload = {}) {
       ),
     },
   ];
+}
+
+function toPlannerElement(element = {}) {
+  return {
+    id: String(element.id || ""),
+    tag: String(element.tag || ""),
+    type: String(element.type || ""),
+    label: String(element.label || "").slice(0, 140),
+    value: String(element.value || "").slice(0, 120),
+    placeholder: String(element.placeholder || "").slice(0, 100),
+    options: Array.isArray(element.options) ? element.options.slice(0, 30) : [],
+    disabled: Boolean(element.disabled),
+    visible: Boolean(element.visible),
+    x: Number.isFinite(element.x) ? element.x : 0,
+    y: Number.isFinite(element.y) ? element.y : 0,
+  };
 }
 
 function normalizeActionPlan(content) {

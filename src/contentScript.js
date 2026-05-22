@@ -4,11 +4,30 @@
 
   const MAX_PAGE_TEXT = 16000;
   const MAX_VIEWPORT_TEXT = 7000;
+  const MAX_RELEVANT_TEXT = 5000;
   const MAX_SELECTION_TEXT = 4000;
   const MAX_ACTION_ELEMENTS = 80;
   const PAGE_CACHE_TTL_MS = 45000;
   const PANEL_RESTORE_MS = 120000;
   const POST_ACTION_REFRESH_DELAYS = [200, 650, 1400, 2800];
+  const ACTION_RELOCATION_MIN_SCORE = 0.58;
+  const ACTION_RELOCATION_CLEAR_SCORE = 0.78;
+  const ACTION_RELOCATION_AMBIGUITY_GAP = 0.08;
+  const ACTION_ELEMENT_SELECTORS = [
+    "button",
+    "a[href]",
+    "input:not([type='hidden'])",
+    "textarea",
+    "select",
+    "[role='button']",
+    "[role='link']",
+    "[role='checkbox']",
+    "[role='radio']",
+    "[role='switch']",
+    "[role='tab']",
+    "[contenteditable='true']",
+    "[tabindex]:not([tabindex='-1'])",
+  ];
   const AGENT_PERMISSION_MODES = {
     default: {
       label: "默认权限",
@@ -546,7 +565,6 @@
       return;
     }
 
-    const context = getPageContext();
     const normalizedQuestion = normalizeText(question);
 
     if (!normalizedQuestion) {
@@ -554,6 +572,8 @@
       state.textarea.focus();
       return;
     }
+
+    const context = getPageContext({ query: normalizedQuestion });
 
     openPanel();
     const quotedText = state.quoteText || context.selectedText;
@@ -571,6 +591,7 @@
       pageTitle: context.title,
       pageUrl: context.url,
       selectedText: limitText(quotedText, MAX_SELECTION_TEXT),
+      relevantText: limitText(context.relevantText, MAX_RELEVANT_TEXT),
       viewportText: limitText(context.viewportText, MAX_VIEWPORT_TEXT),
       pageText: limitText(context.pageText, MAX_PAGE_TEXT),
       history: getRecentConversation(),
@@ -594,9 +615,9 @@
     }
 
     openPanel();
-    const context = getPageContext();
     const actionContext = collectActionContext();
     const permissionMode = getAgentPermissionMode();
+    const context = getPageContext({ query: instruction });
     addMessage("user", `请帮我操作页面：${instruction}`);
     resetComposeMode();
     state.textarea.value = "";
@@ -613,6 +634,7 @@
           pageTitle: context.title,
           pageUrl: context.url,
           selectedText: limitText(context.selectedText, MAX_SELECTION_TEXT),
+          relevantText: limitText(context.relevantText, 1800),
           viewportText: limitText(context.viewportText, 3000),
           permissionMode,
           elements: actionContext.elements,
@@ -1019,31 +1041,16 @@
       url: state.pageCache.url,
       selectedText,
       viewportText,
+      relevantText: extractRelevantText(options.query),
       pageText: state.pageCache.pageText,
       cachedAt: state.pageCache.cachedAt,
     };
   }
 
   function collectActionContext() {
-    const selectors = [
-      "button",
-      "a[href]",
-      "input:not([type='hidden'])",
-      "textarea",
-      "select",
-      "[role='button']",
-      "[role='link']",
-      "[role='checkbox']",
-      "[role='radio']",
-      "[role='switch']",
-      "[role='tab']",
-      "[contenteditable='true']",
-      "[tabindex]:not([tabindex='-1'])",
-    ];
-
     const elements = [];
     const seen = new Set();
-    const candidates = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
+    const candidates = getActionElementCandidates();
 
     for (const element of candidates) {
       if (elements.length >= MAX_ACTION_ELEMENTS) break;
@@ -1063,6 +1070,7 @@
         tag,
         type,
         label: limitText(label || `${tag} ${type}`, 140),
+        signature: buildElementSignature(element, { label }),
         value: getActionElementValue(element),
         placeholder: limitText(element.getAttribute("placeholder") || "", 100),
         options: getSelectOptions(element),
@@ -1074,6 +1082,10 @@
     }
 
     return { elements };
+  }
+
+  function getActionElementCandidates() {
+    return ACTION_ELEMENT_SELECTORS.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
   }
 
   function isActionableElement(element) {
@@ -1134,6 +1146,118 @@
     const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
     return rect.bottom > 0 && rect.right > 0 && rect.top < viewportHeight && rect.left < viewportWidth;
+  }
+
+  function buildElementSignature(element, options = {}) {
+    if (!element) return null;
+
+    const rect = element.getBoundingClientRect();
+    const parent = getSignatureParent(element);
+
+    return {
+      tag: element.tagName.toLowerCase(),
+      type: normalizeText(element.getAttribute("type") || element.getAttribute("role") || element.tagName).toLowerCase(),
+      role: normalizeText(element.getAttribute("role") || "").toLowerCase(),
+      label: limitSignatureText(options.label ?? getActionElementLabel(element), 180),
+      text: limitSignatureText(element.innerText || element.textContent || "", 180),
+      value: limitSignatureText(getActionElementValue(element), 100),
+      attrs: getComparableAttributes(element),
+      parent: parent
+        ? {
+            tag: parent.tagName.toLowerCase(),
+            attrs: getComparableAttributes(parent),
+            text: limitSignatureText(parent.innerText || parent.textContent || "", 160),
+          }
+        : null,
+      siblings: getSiblingTags(element),
+      path: getElementPathTags(element),
+      depth: getElementDepth(element),
+      rect: {
+        x: Math.round(rect.left + rect.width / 2),
+        y: Math.round(rect.top + rect.height / 2),
+      },
+    };
+  }
+
+  function getSignatureParent(element) {
+    const parent = element.parentElement?.closest("label, form, nav, header, main, section, article, aside, footer, div, li, td, th");
+    return parent && !state.host?.contains(parent) ? parent : null;
+  }
+
+  function getComparableAttributes(element) {
+    const names = ["id", "name", "aria-label", "title", "role", "placeholder", "href", "src", "class", "data-testid", "data-test", "data-cy"];
+    const attrs = {};
+
+    for (const name of names) {
+      const value = normalizeComparableAttribute(name, element.getAttribute(name));
+      if (value) attrs[name] = value;
+    }
+
+    return attrs;
+  }
+
+  function normalizeComparableAttribute(name, value) {
+    const text = normalizeText(value);
+    if (!text) return "";
+
+    if (name === "href" || name === "src") {
+      try {
+        const url = new URL(text, location.href);
+        return limitSignatureText(`${url.hostname}${url.pathname}${url.search ? "?" : ""}`, 180);
+      } catch {
+        return limitSignatureText(text, 180);
+      }
+    }
+
+    if (name === "class") {
+      return text
+        .split(/\s+/)
+        .filter((item) => item && !/^\d+$/.test(item))
+        .slice(0, 8)
+        .join(" ");
+    }
+
+    return limitSignatureText(text, 180);
+  }
+
+  function getSiblingTags(element) {
+    const parent = element.parentElement;
+    if (!parent) return [];
+
+    return Array.from(parent.children)
+      .filter((child) => child !== element)
+      .slice(0, 12)
+      .map((child) => child.tagName.toLowerCase());
+  }
+
+  function getElementPathTags(element, maxDepth = 7) {
+    const tags = [];
+    let current = element;
+
+    while (current && current !== document.documentElement && tags.length < maxDepth) {
+      if (current.nodeType === Node.ELEMENT_NODE && !state.host?.contains(current)) {
+        tags.push(current.tagName.toLowerCase());
+      }
+      current = current.parentElement;
+    }
+
+    return tags.reverse();
+  }
+
+  function getElementDepth(element) {
+    let depth = 0;
+    let current = element;
+
+    while (current?.parentElement && current !== document.documentElement) {
+      depth += 1;
+      current = current.parentElement;
+    }
+
+    return depth;
+  }
+
+  function limitSignatureText(text, maxLength) {
+    return normalizeText(text).slice(0, maxLength);
   }
 
   function renderActionPlan(plan) {
@@ -1215,7 +1339,7 @@
     }
 
     const elementMeta = elements.find((item) => item.id === step.targetId);
-    const element = elementMeta ? document.querySelector(`[data-browsermate-action-id="${escapeCssIdentifier(elementMeta.id)}"]`) : null;
+    const element = resolveActionElement(elementMeta);
     if (!element || !isActionableElement(element)) {
       throw new Error(`找不到可操作元素：${step.targetId || "未指定"}`);
     }
@@ -1242,6 +1366,165 @@
     if (step.action === "check" || step.action === "uncheck") {
       setCheckedValue(element, step.action === "check");
     }
+  }
+
+  function resolveActionElement(elementMeta) {
+    if (!elementMeta) return null;
+
+    const current = document.querySelector(`[data-browsermate-action-id="${escapeCssIdentifier(elementMeta.id)}"]`);
+    if (isActionableElement(current)) return current;
+
+    return findSimilarActionElement(elementMeta);
+  }
+
+  function findSimilarActionElement(elementMeta) {
+    const signature = elementMeta.signature;
+    if (!signature) return null;
+
+    const seen = new Set();
+    const scored = [];
+
+    for (const candidate of getActionElementCandidates()) {
+      if (seen.has(candidate) || !isActionableElement(candidate)) continue;
+      seen.add(candidate);
+
+      const score = scoreActionElementSimilarity(elementMeta, candidate);
+      if (score >= ACTION_RELOCATION_MIN_SCORE) {
+        scored.push({ candidate, score });
+      }
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    const best = scored[0];
+    if (!best) return null;
+
+    const secondScore = scored[1]?.score || 0;
+    const isClearEnough =
+      best.score >= ACTION_RELOCATION_CLEAR_SCORE || best.score - secondScore >= ACTION_RELOCATION_AMBIGUITY_GAP;
+    if (!isClearEnough) return null;
+
+    best.candidate.dataset.browsermateActionId = elementMeta.id;
+    return best.candidate;
+  }
+
+  function scoreActionElementSimilarity(elementMeta, candidate) {
+    const expected = elementMeta.signature;
+    const actual = buildElementSignature(candidate);
+    if (!expected || !actual) return 0;
+
+    let score = 0;
+    let weight = 0;
+    const add = (partScore, partWeight) => {
+      score += Math.max(0, Math.min(1, partScore)) * partWeight;
+      weight += partWeight;
+    };
+
+    add(expected.tag === actual.tag ? 1 : 0, 1.3);
+    add(expected.type === actual.type ? 1 : sequenceSimilarity(expected.type, actual.type), 1);
+    add(sequenceSimilarity(expected.label || elementMeta.label, actual.label), 2.6);
+    add(sequenceSimilarity(expected.text || elementMeta.label, actual.text || actual.label), 1.4);
+    add(scoreObjectSimilarity(expected.attrs, actual.attrs), 2);
+    add(scoreParentSimilarity(expected.parent, actual.parent), 1.2);
+    add(scoreArraySimilarity(expected.path, actual.path), 1);
+    add(scoreArraySimilarity(expected.siblings, actual.siblings), 0.8);
+    add(scoreDepthSimilarity(expected.depth, actual.depth), 0.4);
+    add(scoreRectSimilarity(expected.rect, actual.rect), 0.6);
+
+    return weight ? score / weight : 0;
+  }
+
+  function scoreParentSimilarity(expected, actual) {
+    if (!expected || !actual) return 0;
+
+    return (
+      (expected.tag === actual.tag ? 0.35 : 0) +
+      scoreObjectSimilarity(expected.attrs, actual.attrs) * 0.35 +
+      sequenceSimilarity(expected.text, actual.text) * 0.3
+    );
+  }
+
+  function scoreDepthSimilarity(expectedDepth, actualDepth) {
+    if (!Number.isFinite(expectedDepth) || !Number.isFinite(actualDepth)) return 0;
+    return Math.max(0, 1 - Math.abs(expectedDepth - actualDepth) / 8);
+  }
+
+  function scoreRectSimilarity(expected, actual) {
+    if (!expected || !actual) return 0;
+
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 1;
+    const distance = Math.hypot((expected.x || 0) - (actual.x || 0), (expected.y || 0) - (actual.y || 0));
+    const diagonal = Math.hypot(viewportWidth, viewportHeight);
+
+    return Math.max(0, 1 - distance / Math.max(diagonal, 1));
+  }
+
+  function scoreObjectSimilarity(expected = {}, actual = {}) {
+    const keys = Array.from(new Set([...Object.keys(expected || {}), ...Object.keys(actual || {})]));
+    if (!keys.length) return 0;
+
+    let score = 0;
+    let weight = 0;
+    for (const key of keys) {
+      const keyWeight = ["id", "name", "aria-label", "placeholder", "href"].includes(key) ? 1.4 : 1;
+      score += sequenceSimilarity(expected?.[key], actual?.[key]) * keyWeight;
+      weight += keyWeight;
+    }
+
+    return weight ? score / weight : 0;
+  }
+
+  function scoreArraySimilarity(expected = [], actual = []) {
+    if (!expected.length && !actual.length) return 0;
+    if (!expected.length || !actual.length) return 0;
+
+    const expectedText = expected.join(">");
+    const actualText = actual.join(">");
+    const setOverlap =
+      expected.filter((item) => actual.includes(item)).length / Math.max(new Set([...expected, ...actual]).size, 1);
+
+    return sequenceSimilarity(expectedText, actualText) * 0.65 + setOverlap * 0.35;
+  }
+
+  function sequenceSimilarity(left, right) {
+    const a = normalizeText(left).toLowerCase();
+    const b = normalizeText(right).toLowerCase();
+    if (!a && !b) return 0;
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+    if (a.includes(b) || b.includes(a)) {
+      return Math.min(a.length, b.length) / Math.max(a.length, b.length);
+    }
+
+    const gramsA = getBigrams(a);
+    const gramsB = getBigrams(b);
+    if (!gramsA.length || !gramsB.length) {
+      return a[0] === b[0] ? 0.35 : 0;
+    }
+
+    const counts = new Map();
+    for (const gram of gramsA) counts.set(gram, (counts.get(gram) || 0) + 1);
+
+    let overlap = 0;
+    for (const gram of gramsB) {
+      const count = counts.get(gram) || 0;
+      if (!count) continue;
+      overlap += 1;
+      counts.set(gram, count - 1);
+    }
+
+    return (2 * overlap) / (gramsA.length + gramsB.length);
+  }
+
+  function getBigrams(text) {
+    const compact = String(text || "").replace(/\s+/g, " ").trim();
+    if (compact.length <= 1) return compact ? [compact] : [];
+
+    const grams = [];
+    for (let index = 0; index < compact.length - 1; index += 1) {
+      grams.push(compact.slice(index, index + 2));
+    }
+    return grams;
   }
 
   function setElementValue(element, value) {
@@ -1543,6 +1826,153 @@
     return unique.join("\n\n");
   }
 
+  function extractRelevantText(query) {
+    const terms = getSearchTerms(query);
+    if (!terms.length || !document.body) return "";
+
+    const blocks = collectRelevantTextBlocks(terms);
+    const seen = new Set();
+    const selected = [];
+    let length = 0;
+
+    for (const block of blocks) {
+      const text = normalizeText(block.text);
+      if (!text || seen.has(text) || isNoiseLine(text)) continue;
+
+      seen.add(text);
+      selected.push(text);
+      length += text.length + 2;
+      if (length >= MAX_RELEVANT_TEXT) break;
+    }
+
+    return selected.join("\n\n");
+  }
+
+  function collectRelevantTextBlocks(terms) {
+    const blocks = Array.from(document.body.querySelectorAll("p, li, h1, h2, h3, h4, blockquote, article, section, main, [role='main'], td, th, label"))
+      .filter((element) => isReadableBlockVisible(element) && !state.host?.contains(element))
+      .map((element) => {
+        const text = readElementText(element);
+        return {
+          text: limitText(text, 900),
+          score: scoreTextBlockRelevance(text, terms, element),
+        };
+      })
+      .filter((block) => block.text.length >= 8 && block.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 12);
+
+    if (blocks.length) return blocks;
+
+    return collectTextNodesMatchingTerms(terms);
+  }
+
+  function collectTextNodesMatchingTerms(terms) {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const text = normalizeText(node.nodeValue);
+        if (text.length < 8 || isIgnorableTextNode(node)) return NodeFilter.FILTER_REJECT;
+        return terms.some((term) => text.toLowerCase().includes(term)) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      },
+    });
+
+    const matches = [];
+    let node = walker.nextNode();
+    while (node && matches.length < 12) {
+      const container = node.parentElement?.closest("p, li, h1, h2, h3, h4, blockquote, article, section, main, [role='main'], div") || node.parentElement;
+      const text = readElementText(container);
+      matches.push({
+        text: limitText(text || node.nodeValue, 900),
+        score: scoreTextBlockRelevance(text || node.nodeValue, terms, container),
+      });
+      node = walker.nextNode();
+    }
+
+    return matches.sort((a, b) => b.score - a.score);
+  }
+
+  function scoreTextBlockRelevance(text, terms, element) {
+    const value = normalizeText(text);
+    if (!value) return 0;
+
+    const lower = value.toLowerCase();
+    const hitScore = terms.reduce((score, term) => {
+      if (!term) return score;
+      const escaped = escapeRegExp(term);
+      const matches = lower.match(new RegExp(escaped, "g"));
+      return score + (matches?.length || 0) * Math.min(80, term.length * 12);
+    }, 0);
+
+    if (!hitScore) return 0;
+
+    const containerScore = scoreVisibleTextContainer(element);
+    const lengthScore = Math.min(value.length, 700) / 7;
+    const viewportBonus = element && isElementInViewport(element.getBoundingClientRect()) ? 80 : 0;
+
+    return hitScore + containerScore + lengthScore + viewportBonus;
+  }
+
+  function getSearchTerms(query) {
+    const text = normalizeText(query)
+      .toLowerCase()
+      .replace(/[，。！？；：“”‘’【】（）(){}[\]<>|/\\]+/g, " ");
+
+    const terms = new Set();
+    const latinStopWords = new Set([
+      "the",
+      "and",
+      "for",
+      "with",
+      "this",
+      "that",
+      "what",
+      "how",
+      "why",
+      "please",
+      "click",
+      "open",
+      "select",
+      "type",
+      "search",
+      "scroll",
+    ]);
+    const cjkStopWords = new Set(["请", "帮我", "帮", "我", "这个", "那个", "页面", "网页", "点击", "打开", "选择", "输入", "搜索", "总结", "解释", "一下"]);
+
+    for (const token of text.split(/\s+/)) {
+      if (!token || latinStopWords.has(token) || cjkStopWords.has(token)) continue;
+      if (/^[a-z0-9_-]{3,}$/i.test(token) || /[\u4e00-\u9fff]{2,}/.test(token)) {
+        terms.add(token);
+      }
+    }
+
+    const cjkPhrases = text.match(/[\u4e00-\u9fff]{2,}/g) || [];
+    for (const phrase of cjkPhrases) {
+      if (cjkStopWords.has(phrase)) continue;
+      terms.add(phrase);
+      for (let index = 0; index < phrase.length - 1; index += 1) {
+        const gram = phrase.slice(index, index + 2);
+        if (!cjkStopWords.has(gram)) terms.add(gram);
+      }
+    }
+
+    return Array.from(terms).slice(0, 12);
+  }
+
+  function isReadableBlockVisible(element) {
+    if (!element || state.host?.contains(element)) return false;
+    if (element.closest("script, style, noscript, template, svg, canvas, iframe, [hidden], [aria-hidden='true'], [inert]")) return false;
+
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return (
+      rect.width > 4 &&
+      rect.height > 4 &&
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      style.opacity !== "0"
+    );
+  }
+
   function isNoiseLine(text) {
     return /^(上一章|下一章|目录|返回|首页|我的书架|设置|字体|字号|夜间|白天|章节|分享|评论|点赞|收藏|关注|广告|打开 App|下载 App)$/i.test(
       normalizeText(text),
@@ -1736,6 +2166,10 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#039;");
+  }
+
+  function escapeRegExp(value) {
+    return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
   function escapeCssIdentifier(value) {
