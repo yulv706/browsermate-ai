@@ -1,6 +1,6 @@
 # Release Checklist
 
-This checklist prepares a PageMate AI release for GitHub.
+This checklist prepares a BrowserMate AI release for GitHub.
 
 ## Before Release
 
@@ -16,21 +16,21 @@ Confirm the generated archive exists:
 ls dist/
 ```
 
-The release archive should be named like `pagemate-ai-v0.1.0.zip`.
+The release archive should be named like `browsermate-ai-v0.1.0.zip`.
 
 ## Create the GitHub Repository
 
 Create an empty public repository on GitHub, then connect this local repository:
 
 ```bash
-git remote add origin https://github.com/<your-name>/weread-mate.git
+git remote add origin https://github.com/<your-name>/browsermate-ai.git
 git push -u origin main
 ```
 
 If you prefer the GitHub CLI:
 
 ```bash
-gh repo create <your-name>/weread-mate --public --source . --remote origin --push
+gh repo create <your-name>/browsermate-ai --public --source . --remote origin --push
 ```
 
 ## Create a Release
@@ -39,7 +39,7 @@ gh repo create <your-name>/weread-mate --public --source . --remote origin --pus
 2. Go to Releases.
 3. Draft a new release.
 4. Use the tag `v0.1.0`.
-5. Upload `dist/pagemate-ai-v0.1.0.zip`.
+5. Upload `dist/browsermate-ai-v0.1.0.zip`.
 6. Copy the highlights from `CHANGELOG.md`.
 
 ## Store Submission Notes

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "PageMate AI",
-  "description": "A floating AI assistant that answers questions using the current page as context.",
+  "name": "BrowserMate AI",
+  "description": "A universal AI browser copilot that understands the current page, selection, and browsing context.",
   "version": "0.1.0",
   "icons": {
     "16": "icons/icon16.png",
@@ -36,7 +36,7 @@
   ],
   "options_page": "src/options/options.html",
   "action": {
-    "default_title": "PageMate AI",
+    "default_title": "BrowserMate AI",
     "default_popup": "src/popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
@@ -51,7 +51,7 @@
         "default": "Alt+W",
         "mac": "Alt+W"
       },
-      "description": "Toggle PageMate AI assistant"
+      "description": "Toggle BrowserMate AI assistant"
     }
   }
 }

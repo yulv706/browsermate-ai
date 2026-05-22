@@ -12,4 +12,4 @@ If this repository has private vulnerability reporting enabled, use GitHub's pri
 
 ## Sensitive Data
 
-PageMate AI can send page content to the AI endpoint configured by the user. Changes that affect what data is sent, how API keys are stored, or which origins can be accessed should receive extra review.
+BrowserMate AI can send page content to the AI endpoint configured by the user. Changes that affect what data is sent, how API keys are stored, or which origins can be accessed should receive extra review.

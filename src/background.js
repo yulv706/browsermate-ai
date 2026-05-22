@@ -17,32 +17,32 @@ chrome.commands.onCommand.addListener(async (command) => {
       await toggleAssistant(tab.id);
     }
   } catch (error) {
-    console.warn("PageMate AI shortcut failed:", error);
+    console.warn("BrowserMate AI shortcut failed:", error);
   }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === "PAGEMATE_AI_REQUEST") {
+  if (message?.type === "BROWSERMATE_AI_REQUEST") {
     completeWithAI(message.payload)
       .then((result) => sendResponse({ ok: true, result }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 
-  if (message?.type === "PAGEMATE_OPEN_OPTIONS") {
+  if (message?.type === "BROWSERMATE_OPEN_OPTIONS") {
     chrome.runtime.openOptionsPage();
     sendResponse({ ok: true });
     return false;
   }
 
-  if (message?.type === "PAGEMATE_TOGGLE_TAB") {
+  if (message?.type === "BROWSERMATE_TOGGLE_TAB") {
     toggleAssistant(message.tabId)
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 
-  if (message?.type === "PAGEMATE_ASK_TAB") {
+  if (message?.type === "BROWSERMATE_ASK_TAB") {
     askAssistant(message.tabId, message.question)
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
@@ -53,7 +53,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== "PAGEMATE_AI_STREAM") return;
+  if (port.name !== "BROWSERMATE_AI_STREAM") return;
 
   let abortController = null;
   let isActive = false;
@@ -397,17 +397,17 @@ function isSupportedPage(url = "") {
 
 async function toggleAssistant(tabId) {
   await ensureContentScript(tabId);
-  await chrome.tabs.sendMessage(tabId, { type: "PAGEMATE_TOGGLE" });
+  await chrome.tabs.sendMessage(tabId, { type: "BROWSERMATE_TOGGLE" });
 }
 
 async function askAssistant(tabId, question) {
   await ensureContentScript(tabId);
-  await chrome.tabs.sendMessage(tabId, { type: "PAGEMATE_ASK", question });
+  await chrome.tabs.sendMessage(tabId, { type: "BROWSERMATE_ASK", question });
 }
 
 async function ensureContentScript(tabId) {
   try {
-    await chrome.tabs.sendMessage(tabId, { type: "PAGEMATE_PING" });
+    await chrome.tabs.sendMessage(tabId, { type: "BROWSERMATE_PING" });
   } catch {
     await chrome.scripting.executeScript({
       target: { tabId },

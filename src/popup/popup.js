@@ -24,9 +24,9 @@ document.addEventListener("click", async (event) => {
 
     const message =
       command === "toggle"
-        ? { type: "PAGEMATE_TOGGLE_TAB", tabId: tab.id }
+        ? { type: "BROWSERMATE_TOGGLE_TAB", tabId: tab.id }
         : {
-            type: "PAGEMATE_ASK_TAB",
+            type: "BROWSERMATE_ASK_TAB",
             tabId: tab.id,
             question: command === "summarize" ? PAGE_SUMMARY_PROMPT : "",
           };

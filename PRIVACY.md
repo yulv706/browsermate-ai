@@ -1,6 +1,6 @@
 # Privacy Policy
 
-PageMate AI is a local browser extension. It does not include any built-in analytics, tracking SDKs, advertising SDKs, or remote telemetry endpoints.
+BrowserMate AI is a local browser extension. It does not include any built-in analytics, tracking SDKs, advertising SDKs, or remote telemetry endpoints.
 
 ## Data Stored Locally
 

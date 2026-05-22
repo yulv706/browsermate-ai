@@ -1,6 +1,6 @@
 # Permissions
 
-PageMate AI uses broad page access because its core feature is answering questions with the current page as context.
+BrowserMate AI uses broad page access because its core feature is answering questions with the current page as context.
 
 ## `storage`
 

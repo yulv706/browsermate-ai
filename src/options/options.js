@@ -27,9 +27,9 @@ testButton.addEventListener("click", async () => {
 
   try {
     const response = await chrome.runtime.sendMessage({
-      type: "PAGEMATE_AI_REQUEST",
+      type: "BROWSERMATE_AI_REQUEST",
       payload: {
-        question: "请用一句话回复：PageMate AI 连接成功。",
+        question: "请用一句话回复：BrowserMate AI 连接成功。",
         pageText: "这是一次设置页连接测试。",
       },
     });

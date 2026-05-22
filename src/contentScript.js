@@ -1,6 +1,6 @@
 (() => {
-  if (window.__PAGEMATE_AI_READY__) return;
-  window.__PAGEMATE_AI_READY__ = true;
+  if (window.__BROWSERMATE_AI_READY__) return;
+  window.__BROWSERMATE_AI_READY__ = true;
 
   const MAX_PAGE_TEXT = 16000;
   const MAX_VIEWPORT_TEXT = 7000;
@@ -51,20 +51,20 @@
 
   function createAssistant() {
     state.host = document.createElement("div");
-    state.host.id = "pagemate-ai-host";
+    state.host.id = "browsermate-ai-host";
     document.documentElement.appendChild(state.host);
 
     const shadow = state.host.attachShadow({ mode: "open" });
     shadow.innerHTML = `
       <style>${getStyles()}</style>
-      <button class="pm-toggle" type="button" aria-label="打开 PageMate AI">AI</button>
-      <aside class="pm-panel" aria-label="PageMate AI" aria-hidden="true">
+      <button class="pm-toggle" type="button" aria-label="打开 BrowserMate AI">AI</button>
+      <aside class="pm-panel" aria-label="BrowserMate AI" aria-hidden="true">
         <header class="pm-header">
           <div class="pm-brand">
-            <span class="pm-mark" aria-hidden="true">P</span>
+            <span class="pm-mark" aria-hidden="true">B</span>
             <div>
-              <strong>PageMate AI</strong>
-              <span>基于当前网页回答问题</span>
+              <strong>BrowserMate AI</strong>
+              <span>AI 辅助浏览当前网页</span>
             </div>
           </div>
           <div class="pm-header-actions">
@@ -188,14 +188,14 @@
 
   function bindRuntimeMessages() {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      if (message?.type === "PAGEMATE_TOGGLE") {
+      if (message?.type === "BROWSERMATE_TOGGLE") {
         togglePanel();
       }
-      if (message?.type === "PAGEMATE_PING") {
+      if (message?.type === "BROWSERMATE_PING") {
         sendResponse({ ok: true });
         return true;
       }
-      if (message?.type === "PAGEMATE_ASK") {
+      if (message?.type === "BROWSERMATE_ASK") {
         openPanel();
         if (message.question) {
           askPage(message.question).catch(handleRuntimeFailure);
@@ -262,7 +262,7 @@
     if (action === "refresh") refreshContext(true);
     if (action === "abort") abortStreaming();
     if (action === "options") {
-      safeSendMessage({ type: "PAGEMATE_OPEN_OPTIONS" }).catch(handleRuntimeFailure);
+      safeSendMessage({ type: "BROWSERMATE_OPEN_OPTIONS" }).catch(handleRuntimeFailure);
     }
     if (action === "retry" && state.lastRequest) {
       retryLastRequest().catch(handleRuntimeFailure);
@@ -359,7 +359,7 @@
       state.abortRequested = false;
 
       try {
-        state.streamPort = chrome.runtime.connect({ name: "PAGEMATE_AI_STREAM" });
+        state.streamPort = chrome.runtime.connect({ name: "BROWSERMATE_AI_STREAM" });
       } catch (error) {
         setBusy(false);
         reject(normalizeRuntimeError(error));
@@ -613,12 +613,7 @@
   }
 
   function extractMainText() {
-    if (location.hostname === "weread.qq.com") {
-      const weReadText = extractWeReadText();
-      if (weReadText) return weReadText;
-    }
-
-    const candidates = collectTextCandidates();
+    const candidates = collectReadableTextCandidates();
     const ranked = rankTextCandidates(candidates);
     if (ranked.length && ranked[0].score >= 900) {
       return ranked[0].text;
@@ -682,7 +677,7 @@
     if (state.host?.contains(element)) return true;
     if (element.closest("script, style, noscript, template, svg, canvas, iframe, textarea, select, option")) return true;
     if (element.closest("[aria-hidden='true'], [hidden], [inert]")) return true;
-    if (element.closest("#pagemate-ai-host")) return true;
+    if (element.closest("#browsermate-ai-host")) return true;
 
     const style = window.getComputedStyle(element);
     if (
@@ -769,7 +764,7 @@
     return unique.join("\n");
   }
 
-  function extractWeReadText() {
+  function collectReadableTextCandidates() {
     const selectors = [
       "[class*='readerChapterContent']",
       "[class*='readerChapter']",
@@ -784,20 +779,9 @@
       "[role='main']",
     ];
 
-    const candidates = selectors
+    return selectors
       .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
-      .filter((element, index, array) => array.indexOf(element) === index && isVisible(element))
-      .sort((a, b) => scoreTextElement(b) - scoreTextElement(a));
-
-    const ranked = rankTextCandidates(candidates);
-    if (ranked.length && ranked[0].score >= 900) {
-      return ranked[0].text;
-    }
-
-    const paragraphText = collectParagraphText(document.body);
-    if (isLikelyBodyText(paragraphText)) return paragraphText;
-
-    return readElementText(document.body);
+      .filter((element, index, array) => array.indexOf(element) === index && isVisible(element));
   }
 
   function scoreTextElement(element) {
@@ -1001,7 +985,7 @@
         language: String(language || "").trim(),
         code: String(code || "").replace(/\n$/, ""),
       });
-      return `\n\n@@PAGEMATE_CODE_BLOCK_${index}@@\n\n`;
+      return `\n\n@@BROWSERMATE_CODE_BLOCK_${index}@@\n\n`;
     });
 
     const escaped = escapeHtml(withoutCodeBlocks);
@@ -1022,7 +1006,7 @@
       const language = block.language ? `<span>${escapeHtml(block.language)}</span>` : "";
       const code = escapeHtml(block.code);
       return result.replace(
-        `<p>@@PAGEMATE_CODE_BLOCK_${index}@@</p>`,
+        `<p>@@BROWSERMATE_CODE_BLOCK_${index}@@</p>`,
         `<pre>${language}<code>${code}</code></pre>`,
       );
     }, html);

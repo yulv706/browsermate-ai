@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve PageMate AI.
+Thanks for helping improve BrowserMate AI.
 
 ## Development Setup
 

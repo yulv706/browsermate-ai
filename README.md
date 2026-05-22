@@ -1,12 +1,12 @@
-# PageMate AI
+# BrowserMate AI
 
-PageMate AI 是一个开源的 Chrome 浏览器扩展。它会在网页右下角提供一个轻量 AI 侧边栏，读取当前页面标题、地址、可见内容、选中文本和正文缓存，然后基于这些上下文回答问题。
+BrowserMate AI 是一个开源的 AI 辅助浏览器插件。它会在网页右下角提供轻量侧边栏，读取当前页面标题、地址、可见内容、选中文本和正文缓存，让你可以直接围绕正在浏览的内容提问、总结、翻译和整理要点。
 
-项目目录名 `weread-mate` 来自最初的微信读书辅助场景；当前扩展已经可以用于任意 `http/https` 网页，并对 `weread.qq.com` 做了正文提取优化。
+它的定位不是某个网站的专用工具，而是一个通用的浏览器级 AI copilot：你在网页上看资料、读文章、查文档、研究产品、浏览长页面时，都可以把当前页面作为上下文交给 AI。
 
 ## 功能
 
-- 在普通网页右下角显示悬浮 AI 按钮。
+- 在普通 `http/https` 网页右下角显示悬浮 AI 按钮。
 - 通过侧边栏基于当前网页连续追问，并保留最近几轮对话上下文。
 - 自动提取当前视口可见内容，选中文本会作为最高优先级引用。
 - 缓存同一页面正文，减少连续追问时的重复提取。
@@ -41,7 +41,7 @@ https://api.example.com/v1/chat/completions
 
 ## 权限说明
 
-PageMate AI 需要读取当前网页内容并把用户选择的问题发送给你配置的 AI 服务，因此声明了以下权限：
+BrowserMate AI 需要读取当前网页内容并把用户选择的问题发送给你配置的 AI 服务，因此声明了以下权限：
 
 - `storage`：保存接口地址、API Key、模型名和提示词等设置。
 - `activeTab`：让 Popup 可以操作当前标签页。
@@ -59,7 +59,7 @@ npm run validate
 npm run package
 ```
 
-`npm run package` 会生成 `dist/pagemate-ai-v0.1.0.zip`，可用于 GitHub Release 或手动上传到浏览器扩展商店。
+`npm run package` 会生成 `dist/browsermate-ai-v0.1.0.zip`，可用于 GitHub Release 或手动上传到浏览器扩展商店。
 
 ## 项目结构
 
@@ -85,6 +85,7 @@ docs/
 - Firefox / Edge 兼容性验证。
 - 国际化文案。
 - 可选的本地模型或自托管服务预设。
+- 更强的通用网页正文识别与结构化摘要能力。
 
 ## 贡献
 

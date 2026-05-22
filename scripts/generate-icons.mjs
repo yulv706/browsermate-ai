@@ -39,10 +39,12 @@ function createIcon(size) {
     }
   }
 
-  drawRect(pixels, size, 0.28, 0.22, 0.42, 0.78, [248, 223, 158, 255]);
-  drawRect(pixels, size, 0.38, 0.22, 0.70, 0.34, [248, 223, 158, 255]);
-  drawRect(pixels, size, 0.62, 0.30, 0.75, 0.52, [248, 223, 158, 255]);
-  drawRect(pixels, size, 0.38, 0.47, 0.68, 0.60, [248, 223, 158, 255]);
+  drawRect(pixels, size, 0.28, 0.20, 0.42, 0.80, [248, 223, 158, 255]);
+  drawRect(pixels, size, 0.38, 0.20, 0.66, 0.32, [248, 223, 158, 255]);
+  drawRect(pixels, size, 0.38, 0.45, 0.68, 0.57, [248, 223, 158, 255]);
+  drawRect(pixels, size, 0.38, 0.68, 0.66, 0.80, [248, 223, 158, 255]);
+  drawRect(pixels, size, 0.62, 0.28, 0.76, 0.48, [248, 223, 158, 255]);
+  drawRect(pixels, size, 0.62, 0.54, 0.76, 0.72, [248, 223, 158, 255]);
 
   return encodePng(size, size, pixels);
 }
