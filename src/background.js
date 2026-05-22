@@ -11,7 +11,14 @@ const DEFAULT_SETTINGS = {
 const AI_REQUEST_TIMEOUT_MS = 90000;
 const TAB_SESSION_TTL_MS = 30 * 60 * 1000;
 const TAB_SESSION_KEY_PREFIX = "browsermate-tab-session:";
+const NEW_TAB_HANDOFF_MS = 120000;
 const tabSessionFallback = new Map();
+
+chrome.tabs.onCreated.addListener((tab) => {
+  inheritTabSession(tab).catch((error) => {
+    console.warn("BrowserMate AI failed to inherit tab session:", error);
+  });
+});
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   removeTabSession(tabId).catch((error) => {
@@ -156,6 +163,44 @@ async function updateTabSession(tabId, payload = {}) {
   return next;
 }
 
+async function inheritTabSession(tab = {}) {
+  if (!tab.id || !tab.openerTabId) return;
+
+  const source = await getTabSession(tab.openerTabId).catch(() => ({}));
+  if (!shouldInheritTabSession(source)) return;
+
+  const restoreUntil = Math.max(Number(source.restoreUntil) || 0, Date.now() + NEW_TAB_HANDOFF_MS);
+  const next = {
+    ...source,
+    panelOpen: true,
+    agentMode: true,
+    actionActive: false,
+    restoreUntil,
+    inheritedFromTabId: tab.openerTabId,
+    inheritedAt: Date.now(),
+    lastKnownUrl: tab.url || tab.pendingUrl || source.lastKnownUrl || "",
+    refreshReason: "new-tab-handoff",
+    updatedAt: Date.now(),
+  };
+
+  await writeTabSession(getTabSessionKey(tab.id), next);
+  await updateTabSession(tab.openerTabId, {
+    actionActive: false,
+    pendingFollowUp: "",
+    pendingFollowUpCreatedAt: 0,
+    pendingFollowUpSourceUrl: "",
+    refreshReason: "handoff-to-new-tab",
+  });
+}
+
+function shouldInheritTabSession(session = {}) {
+  if (!session.updatedAt || Date.now() - session.updatedAt > TAB_SESSION_TTL_MS) return false;
+  if (session.pendingFollowUp) return true;
+  if (session.actionActive) return true;
+  if (session.panelOpen && Number(session.restoreUntil) > Date.now()) return true;
+  return false;
+}
+
 async function removeTabSession(tabId) {
   if (!tabId) return;
 
@@ -183,6 +228,8 @@ function normalizeTabSessionPayload(payload = {}) {
   if ("pendingFollowUpSourceUrl" in payload) {
     normalized.pendingFollowUpSourceUrl = String(payload.pendingFollowUpSourceUrl || "").slice(0, 1000);
   }
+  if ("inheritedFromTabId" in payload) normalized.inheritedFromTabId = Math.max(0, Number(payload.inheritedFromTabId) || 0);
+  if ("inheritedAt" in payload) normalized.inheritedAt = Math.max(0, Number(payload.inheritedAt) || 0);
 
   return normalized;
 }

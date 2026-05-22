@@ -88,6 +88,7 @@
     observeUrlChanges();
     observePageChanges();
     observeAssistantHost();
+    observeWindowOpen();
     refreshContext();
     restorePanelSession().catch(() => {
       // Session restore is best-effort and should not interrupt normal page use.
@@ -413,6 +414,17 @@
     }, 1000);
   }
 
+  function observeWindowOpen() {
+    if (window.__BROWSERMATE_WINDOW_OPEN_PATCHED__) return;
+
+    const nativeOpen = window.open;
+    window.__BROWSERMATE_WINDOW_OPEN_PATCHED__ = true;
+    window.open = function patchedWindowOpen(...args) {
+      prepareNewPageHandoff("window-open");
+      return nativeOpen.apply(this, args);
+    };
+  }
+
   function isContentMutation(mutation) {
     const target = mutation.target;
     if (target?.getRootNode?.() === state.root || state.host?.contains(target)) return false;
@@ -434,6 +446,24 @@
         if (!document.body) return;
         refreshContext(index === POST_ACTION_REFRESH_DELAYS.length - 1);
       }, delayMs);
+    });
+  }
+
+  function prepareNewPageHandoff(reason = "new-page") {
+    if (!isPanelOpen() && !state.restoreSession?.pendingFollowUp && !state.restoreSession?.actionActive) return;
+
+    const restoreUntil = Math.max(Number(state.restoreSession?.restoreUntil) || 0, Date.now() + PANEL_RESTORE_MS);
+    state.restoreSession = {
+      ...(state.restoreSession || {}),
+      panelOpen: true,
+      agentMode: true,
+      restoreUntil,
+    };
+    persistPanelState({
+      panelOpen: true,
+      agentMode: true,
+      restoreUntil,
+      refreshReason: reason,
     });
   }
 
@@ -1426,6 +1456,7 @@
     element.focus?.({ preventScroll: true });
 
     if (step.action === "click") {
+      prepareNewPageHandoff("before-click");
       element.click();
       return;
     }
