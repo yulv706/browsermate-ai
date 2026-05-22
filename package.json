@@ -1,0 +1,23 @@
+{
+  "name": "pagemate-ai",
+  "version": "0.1.0",
+  "description": "A floating AI assistant that answers questions using the current page as context.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "icons": "node scripts/generate-icons.mjs",
+    "validate": "node scripts/validate-extension.mjs",
+    "package": "node scripts/package-extension.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "chrome-extension",
+    "manifest-v3",
+    "ai",
+    "browser-extension",
+    "weread"
+  ],
+  "license": "MIT"
+}

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PageMate AI 设置</title>
+    <link rel="stylesheet" href="./options.css" />
+  </head>
+  <body>
+    <main class="settings">
+      <header class="hero">
+        <div class="brand-lockup">
+          <span class="brand-mark" aria-hidden="true">P</span>
+          <div>
+            <p class="eyebrow">Extension settings</p>
+            <h1>PageMate AI 设置</h1>
+          </div>
+        </div>
+        <p class="lead">连接兼容 OpenAI Chat Completions 的 AI 服务，让侧边栏基于当前网页回答问题。</p>
+      </header>
+
+      <form id="settings-form" class="settings-form">
+        <section class="form-section" aria-labelledby="service-title">
+          <h2 id="service-title">服务连接</h2>
+          <label>
+            <span>接口地址</span>
+            <input id="endpoint" name="endpoint" placeholder="https://api.example.com/v1" autocomplete="off" inputmode="url" />
+          </label>
+
+          <label>
+            <span>API Key</span>
+            <input id="apiKey" name="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
+          </label>
+        </section>
+
+        <section class="form-section" aria-labelledby="model-title">
+          <h2 id="model-title">模型参数</h2>
+          <div class="grid">
+            <label>
+              <span>模型</span>
+              <input id="model" name="model" placeholder="gpt-4o-mini" autocomplete="off" />
+            </label>
+
+            <label>
+              <span>温度</span>
+              <input id="temperature" name="temperature" type="number" min="0" max="2" step="0.1" />
+            </label>
+          </div>
+        </section>
+
+        <section class="form-section" aria-labelledby="prompt-title">
+          <h2 id="prompt-title">系统提示词</h2>
+          <label>
+            <span>助手行为</span>
+            <textarea id="systemPrompt" name="systemPrompt" rows="7"></textarea>
+          </label>
+        </section>
+
+        <div class="actions">
+          <button class="primary" type="submit">保存设置</button>
+          <button id="test" type="button">测试连接</button>
+          <button id="reset-prompt" type="button">恢复默认提示词</button>
+        </div>
+
+        <p id="status" role="status" aria-live="polite"></p>
+      </form>
+    </main>
+
+    <script src="./options.js"></script>
+  </body>
+</html>

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PageMate AI</title>
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <main class="popup-shell">
+      <header class="brand">
+        <span class="brand-mark" aria-hidden="true">P</span>
+        <div>
+          <strong>PageMate AI</strong>
+          <span>网页上下文助手</span>
+        </div>
+      </header>
+
+      <button class="primary-action" data-command="toggle" type="button">
+        <span aria-hidden="true">↗</span>
+        打开侧边栏
+      </button>
+      <button class="secondary-action" data-command="summarize" type="button">
+        <span aria-hidden="true">≡</span>
+        总结当前页
+      </button>
+      <button class="secondary-action" data-command="ask" type="button">
+        <span aria-hidden="true">?</span>
+        直接提问
+      </button>
+      <button class="secondary-action" data-command="options" type="button">
+        <span aria-hidden="true">⚙</span>
+        配置 AI
+      </button>
+
+      <p id="status" role="status" aria-live="polite"></p>
+    </main>
+    <script src="./popup.js"></script>
+  </body>
+</html>

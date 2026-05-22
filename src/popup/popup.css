@@ -1,0 +1,122 @@
+:root {
+  color-scheme: light;
+}
+
+body {
+  width: 248px;
+  margin: 0;
+  background: #f7f5ef;
+  color: #1d2528;
+  font-family:
+    ui-sans-serif,
+    "PingFang SC",
+    "Microsoft YaHei",
+    "Segoe UI",
+    sans-serif;
+}
+
+.popup-shell {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+.brand-mark {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid rgba(43, 111, 101, 0.3);
+  border-radius: 8px;
+  background: #163c42;
+  color: #f6e7b9;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.brand strong,
+.brand span {
+  display: block;
+}
+
+.brand strong {
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.brand span {
+  color: #6f7772;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+button {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: 0;
+  padding: 8px 11px;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+}
+
+button:focus-visible {
+  outline: 3px solid rgba(202, 121, 57, 0.35);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+  transform: none;
+}
+
+.primary-action {
+  background: #1f665f;
+  box-shadow: 0 8px 18px rgba(20, 82, 77, 0.18);
+  color: #fff;
+  font-weight: 700;
+}
+
+.secondary-action {
+  background: #fffaf0;
+  border-color: #ddd3bd;
+  color: #293336;
+}
+
+#status {
+  min-height: 18px;
+  margin: 0;
+  color: #6b716d;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
+
+  button:hover {
+    transform: none;
+  }
+}
