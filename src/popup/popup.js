@@ -29,6 +29,7 @@ document.addEventListener("click", async (event) => {
             type: "BROWSERMATE_ASK_TAB",
             tabId: tab.id,
             question: command === "summarize" ? PAGE_SUMMARY_PROMPT : "",
+            agentMode: command === "agent",
           };
     const response = await chrome.runtime.sendMessage(message);
     if (response?.ok) {

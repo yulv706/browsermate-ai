@@ -4,7 +4,7 @@ BrowserMate AI uses broad page access because its core feature is answering ques
 
 ## `storage`
 
-Stores user settings, including endpoint URL, API Key, model, temperature, and system prompt.
+Stores user settings, including endpoint URL, API Key, model, temperature, Agent permission mode, and system prompt.
 
 ## `activeTab`
 
@@ -23,6 +23,16 @@ Used for three things:
 - allowing the background service worker to call a user-configured AI endpoint
 
 The extension does not send page content or actionable element summaries automatically on page load. Page context is sent when the user asks a question, clicks a quick action, asks AI to plan page operations, or tests the configured AI connection.
+
+## Agent Permission Modes
+
+BrowserMate AI supports three page-action permission modes:
+
+- Default: every action plan requires confirmation.
+- Auto review: low-risk actions can run automatically, while sensitive actions still require confirmation.
+- Full access: supported page actions can run automatically, while hard-blocked high-risk actions remain blocked.
+
+The extension does not automate password fields or file inputs.
 
 ## Future Improvements
 

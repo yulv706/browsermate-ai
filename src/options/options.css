@@ -162,6 +162,48 @@ textarea {
   grid-template-columns: minmax(0, 1fr) 140px;
 }
 
+.permission-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.permission-card {
+  position: relative;
+  display: grid;
+  min-height: 132px;
+  align-content: start;
+  gap: 8px;
+  border: 1px solid #d6cab6;
+  border-radius: 8px;
+  background: #fffaf0;
+  cursor: pointer;
+  padding: 12px;
+}
+
+.permission-card input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--brand);
+}
+
+.permission-card span {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.permission-card small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.permission-card:has(input:checked) {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(31, 102, 95, 0.12);
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -224,6 +266,10 @@ button.primary {
   }
 
   .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .permission-grid {
     grid-template-columns: 1fr;
   }
 

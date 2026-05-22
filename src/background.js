@@ -3,6 +3,7 @@ const DEFAULT_SETTINGS = {
   apiKey: "",
   model: "gpt-4o-mini",
   temperature: 0.3,
+  agentPermissionMode: "default",
   systemPrompt:
     "你是一个网页 AI 助手。回答必须优先基于用户当前浏览器视口中可见的网页内容；如果用户选中了文本，则选中文本优先级最高。整页正文只作为补充背景，不能覆盖当前可见内容。若可见内容不足以回答，请明确说明缺少哪些信息。回答要准确、简洁，并在有帮助时引用网页中的关键信息。",
 };
@@ -50,7 +51,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "BROWSERMATE_ASK_TAB") {
-    askAssistant(message.tabId, message.question)
+    askAssistant(message.tabId, message.question, { agentMode: Boolean(message.agentMode) })
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
@@ -365,6 +366,7 @@ function buildActionPlanMessages(payload = {}) {
     url: payload.pageUrl || "",
     visibleText: String(payload.viewportText || "").slice(0, 3000),
     selectedText: String(payload.selectedText || "").slice(0, 1200),
+    permissionMode: payload.permissionMode || "default",
     elements,
   };
 
@@ -372,7 +374,7 @@ function buildActionPlanMessages(payload = {}) {
     {
       role: "system",
       content:
-        "你是 BrowserMate AI 的页面操作规划器。你只能根据用户指令和给定的可操作元素列表生成安全、有限、可确认的浏览器页面操作计划。只返回 JSON，不要返回 Markdown、解释文本或代码块。JSON 格式必须为：{\"summary\":\"一句话概括计划\",\"steps\":[{\"action\":\"click|type|select|check|uncheck|scroll|wait\",\"targetId\":\"元素 id，可为空\",\"value\":\"输入值、选择值、滚动方向或等待毫秒，可为空\",\"reason\":\"为什么执行这一步\"}],\"notes\":[\"必要的提醒\"]}。只能使用元素列表中存在的 targetId。不要臆造用户没有提供的姓名、邮箱、地址、密码、支付信息或其他个人信息。不要规划支付、购买、下单、转账、删除、注销、提交订单、上传文件、输入密码等高风险动作；遇到这类请求时返回空 steps 并在 notes 说明需要用户手动完成。若页面元素不足以完成任务，也返回空 steps 并说明缺少什么。",
+        "你是 BrowserMate AI 的浏览器 Agent 操作规划器。你只能根据用户指令和给定的可操作元素列表生成安全、有限、可执行的页面操作计划。只返回 JSON，不要返回 Markdown、解释文本或代码块。JSON 格式必须为：{\"summary\":\"一句话概括计划\",\"steps\":[{\"action\":\"click|type|select|check|uncheck|scroll|wait\",\"targetId\":\"元素 id，可为空\",\"value\":\"输入值、选择值、滚动方向或等待毫秒，可为空\",\"reason\":\"为什么执行这一步\"}],\"notes\":[\"必要的提醒\"]}。只能使用元素列表中存在的 targetId。不要臆造用户没有提供的姓名、邮箱、地址、密码、支付信息或其他个人信息。不要规划支付、购买、下单、转账、删除、注销、提交订单、上传文件、输入密码等高风险动作；遇到这类请求时返回空 steps 并在 notes 说明需要用户手动完成。若页面元素不足以完成任务，也返回空 steps 并说明缺少什么。permissionMode 只表示执行阶段权限，不允许你因此规划高风险动作。",
     },
     {
       role: "user",
@@ -506,9 +508,13 @@ async function toggleAssistant(tabId) {
   await chrome.tabs.sendMessage(tabId, { type: "BROWSERMATE_TOGGLE" });
 }
 
-async function askAssistant(tabId, question) {
+async function askAssistant(tabId, question, options = {}) {
   await ensureContentScript(tabId);
-  await chrome.tabs.sendMessage(tabId, { type: "BROWSERMATE_ASK", question });
+  await chrome.tabs.sendMessage(tabId, {
+    type: "BROWSERMATE_ASK",
+    question,
+    agentMode: Boolean(options.agentMode),
+  });
 }
 
 async function ensureContentScript(tabId) {

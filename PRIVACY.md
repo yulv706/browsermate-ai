@@ -10,6 +10,7 @@ The extension stores the following settings through `chrome.storage.sync`:
 - API Key
 - model name
 - temperature
+- Agent permission mode
 - custom system prompt
 
 These settings are stored by the browser and may sync through the user's browser account if sync is enabled.
@@ -37,7 +38,7 @@ This project does not collect, sell, share, or transmit data to project maintain
 
 Do not send sensitive pages, private documents, credentials, financial records, medical records, or confidential work content to an AI provider unless you trust that provider and understand its data policy.
 
-Review AI-generated page action plans before executing them. BrowserMate AI requires confirmation before execution and blocks common high-risk actions, but users remain responsible for checking the page state before continuing.
+Review AI-generated page action plans before executing them when using the default permission mode. In auto-review or full-access modes, BrowserMate AI may execute supported page actions without an extra confirmation step. Common high-risk actions are still blocked, but users remain responsible for checking the page state before continuing.
 
 ## Contact
 

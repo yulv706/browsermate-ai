@@ -7,6 +7,20 @@
   const MAX_SELECTION_TEXT = 4000;
   const MAX_ACTION_ELEMENTS = 80;
   const PAGE_CACHE_TTL_MS = 45000;
+  const AGENT_PERMISSION_MODES = {
+    default: {
+      label: "默认权限",
+      description: "所有操作先确认",
+    },
+    autoReview: {
+      label: "自动审查",
+      description: "低风险自动执行",
+    },
+    fullAccess: {
+      label: "完全权限",
+      description: "支持动作自动执行",
+    },
+  };
   const QUICK_PROMPTS = {
     summarize: "请总结当前网页的主要内容，并列出关键结论。",
     "key-points": "请提炼当前网页最重要的 5 个要点。",
@@ -27,6 +41,9 @@
     contextMeta: null,
     sendButton: null,
     stopButton: null,
+    permissionBadge: null,
+    settings: null,
+    composeMode: "auto",
     activePlan: null,
     conversation: [],
     pendingMessage: null,
@@ -46,6 +63,7 @@
   function init() {
     createAssistant();
     bindRuntimeMessages();
+    observeRuntimeSettings();
     observeUrlChanges();
     observePageChanges();
     refreshContext();
@@ -79,6 +97,7 @@
 
         <div class="pm-page-state">
           <span class="pm-meta"></span>
+          <button class="pm-permission" data-action="cycle-permission" type="button" title="切换 Agent 权限" aria-label="切换 Agent 权限"></button>
         </div>
 
         <section class="pm-chat" aria-label="对话内容">
@@ -92,7 +111,7 @@
             <button class="pm-chip" data-prompt="explain" type="button">解释选中</button>
             <button class="pm-chip" data-prompt="translate" type="button">翻译选中</button>
             <button class="pm-chip" data-prompt="questions" type="button">继续追问</button>
-            <button class="pm-chip" data-action="plan-actions" type="button">自动操作</button>
+            <button class="pm-chip" data-action="agent-mode" type="button">Agent 模式</button>
           </div>
           <div class="pm-quote" hidden>
             <div>
@@ -102,7 +121,7 @@
             <button data-action="clear-quote" type="button" title="取消引用" aria-label="取消引用">×</button>
           </div>
           <div class="pm-composer">
-            <textarea rows="1" aria-label="向当前网页提问" placeholder="向当前网页提问..."></textarea>
+            <textarea rows="1" aria-label="向 BrowserMate Agent 下达任务" placeholder="提问，或让 Agent 操作当前网页..."></textarea>
             <button class="pm-stop" data-action="abort" type="button" title="停止生成" aria-label="停止生成" hidden>■</button>
             <button class="pm-send" type="submit" title="发送" aria-label="发送">↵</button>
           </div>
@@ -118,15 +137,17 @@
     state.quote = shadow.querySelector(".pm-quote");
     state.quoteBody = shadow.querySelector(".pm-quote p");
     state.contextMeta = shadow.querySelector(".pm-meta");
+    state.permissionBadge = shadow.querySelector(".pm-permission");
     state.sendButton = shadow.querySelector(".pm-send");
     state.stopButton = shadow.querySelector(".pm-stop");
 
-    addMessage("assistant", "我已读取当前页面。你可以直接追问，也可以先选中网页中的一段内容作为引用。");
+    loadRuntimeSettings().catch(handleRuntimeFailure);
+    addMessage("assistant", "我已读取当前页面。你可以直接提问，也可以让我作为浏览器 Agent 操作当前网页。");
     shadow.querySelector(".pm-toggle").addEventListener("click", openPanel);
     shadow.querySelector(".pm-form").addEventListener("submit", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      askPage(state.textarea.value).catch(handleRuntimeFailure);
+      handleAgentSubmit(state.textarea.value).catch(handleRuntimeFailure);
     });
     state.textarea.addEventListener("keydown", handleComposerKeydown);
     state.textarea.addEventListener("input", resizeComposer);
@@ -200,13 +221,69 @@
       }
       if (message?.type === "BROWSERMATE_ASK") {
         openPanel();
-        if (message.question) {
-          askPage(message.question).catch(handleRuntimeFailure);
+        if (message.agentMode) {
+          enterAgentComposeMode();
+        } else if (message.question) {
+          handleAgentSubmit(message.question).catch(handleRuntimeFailure);
         } else {
           state.textarea.focus();
         }
       }
     });
+  }
+
+  async function loadRuntimeSettings() {
+    const settings = await chrome.storage.sync.get({
+      agentPermissionMode: "default",
+    });
+    state.settings = {
+      agentPermissionMode: normalizeAgentPermissionMode(settings.agentPermissionMode),
+    };
+    updatePermissionBadge();
+  }
+
+  function observeRuntimeSettings() {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== "sync" || !changes.agentPermissionMode) return;
+
+      const nextMode = normalizeAgentPermissionMode(changes.agentPermissionMode.newValue);
+      state.settings = {
+        ...(state.settings || {}),
+        agentPermissionMode: nextMode,
+      };
+      updatePermissionBadge();
+      setStatus(`Agent 权限已更新为：${AGENT_PERMISSION_MODES[nextMode].label}`);
+    });
+  }
+
+  async function cyclePermissionMode() {
+    const modes = ["default", "autoReview", "fullAccess"];
+    const current = getAgentPermissionMode();
+    const next = modes[(modes.indexOf(current) + 1) % modes.length];
+
+    state.settings = {
+      ...(state.settings || {}),
+      agentPermissionMode: next,
+    };
+    await chrome.storage.sync.set({ agentPermissionMode: next });
+    updatePermissionBadge();
+    setStatus(`Agent 权限已切换为：${AGENT_PERMISSION_MODES[next].label}`);
+  }
+
+  function getAgentPermissionMode() {
+    return normalizeAgentPermissionMode(state.settings?.agentPermissionMode);
+  }
+
+  function normalizeAgentPermissionMode(value) {
+    return AGENT_PERMISSION_MODES[value] ? value : "default";
+  }
+
+  function updatePermissionBadge() {
+    if (!state.permissionBadge) return;
+    const mode = getAgentPermissionMode();
+    const config = AGENT_PERMISSION_MODES[mode];
+    state.permissionBadge.textContent = `${config.label} · ${config.description}`;
+    state.permissionBadge.dataset.mode = mode;
   }
 
   function observeUrlChanges() {
@@ -267,8 +344,11 @@
     if (action === "options") {
       safeSendMessage({ type: "BROWSERMATE_OPEN_OPTIONS" }).catch(handleRuntimeFailure);
     }
-    if (action === "plan-actions") {
-      planPageActions().catch(handleRuntimeFailure);
+    if (action === "cycle-permission") {
+      cyclePermissionMode().catch(handleRuntimeFailure);
+    }
+    if (action === "agent-mode") {
+      enterAgentComposeMode();
     }
     if (action === "execute-plan") {
       executeActivePlan().catch(handleRuntimeFailure);
@@ -297,6 +377,19 @@
     await askPage(question);
   }
 
+  function enterAgentComposeMode() {
+    openPanel();
+    state.composeMode = "agent";
+    state.textarea.placeholder = "描述你想让 Agent 在当前页面完成的任务...";
+    state.textarea.focus();
+    setStatus(`Agent 模式 · ${AGENT_PERMISSION_MODES[getAgentPermissionMode()].label}`);
+  }
+
+  function resetComposeMode() {
+    state.composeMode = "auto";
+    state.textarea.placeholder = "提问，或让 Agent 操作当前网页...";
+  }
+
   async function retryLastRequest() {
     if (state.streamPort) {
       setStatus("上一条回复仍在生成中，可先停止生成。");
@@ -317,12 +410,41 @@
 
     event.preventDefault();
     event.stopPropagation();
-    askPage(state.textarea.value).catch(handleRuntimeFailure);
+    handleAgentSubmit(state.textarea.value).catch(handleRuntimeFailure);
+  }
+
+  function shouldPlanPageAction(input) {
+    const text = normalizeText(input).toLowerCase();
+    if (!text) return false;
+
+    const actionPatterns = [
+      /(agent|自动操作|帮我操作|替我操作|执行这个页面任务|控制页面|操作页面)/,
+      /^(帮我|请|给我)?(点击|打开|选择|勾选|取消勾选|填写|填入|输入|搜索|滚动|切换|关闭|展开|收起|登录到|跳转到)/,
+      /(点击|打开|选择|勾选|取消勾选|填写|填入|输入|搜索|滚动|切换|关闭|展开|收起).*(按钮|链接|输入框|选项|页面|网页|菜单|标签|tab)/,
+      /\b(click|open|select|check|uncheck|type|fill|search|scroll|toggle|close|expand|choose)\b/,
+    ];
+
+    return actionPatterns.some((pattern) => pattern.test(text));
   }
 
   function resizeComposer() {
     state.textarea.style.height = "auto";
     state.textarea.style.height = `${Math.min(state.textarea.scrollHeight, 132)}px`;
+  }
+
+  async function handleAgentSubmit(input) {
+    const normalizedInput = normalizeText(input);
+    if (!normalizedInput) {
+      setStatus("请先输入一个问题或网页操作任务。");
+      state.textarea.focus();
+      return;
+    }
+
+    if (state.composeMode === "agent" || shouldPlanPageAction(normalizedInput)) {
+      await planPageActions(normalizedInput);
+    } else {
+      await askPage(normalizedInput);
+    }
   }
 
   async function askPage(question) {
@@ -343,6 +465,7 @@
     openPanel();
     const quotedText = state.quoteText || context.selectedText;
     addMessage("user", normalizedQuestion, { quote: quotedText });
+    resetComposeMode();
     state.textarea.value = "";
     resizeComposer();
     clearQuote();
@@ -364,13 +487,13 @@
     await streamAIResponse(payload);
   }
 
-  async function planPageActions() {
+  async function planPageActions(instructionInput) {
     if (state.streamPort) {
       setStatus("上一条回复仍在生成中，可先停止生成。");
       return;
     }
 
-    const instruction = normalizeText(state.textarea.value);
+    const instruction = normalizeText(instructionInput ?? state.textarea.value);
     if (!instruction) {
       setStatus("请先输入你想让 AI 帮你操作页面的目标。");
       state.textarea.focus();
@@ -380,7 +503,9 @@
     openPanel();
     const context = getPageContext();
     const actionContext = collectActionContext();
+    const permissionMode = getAgentPermissionMode();
     addMessage("user", `请帮我操作页面：${instruction}`);
+    resetComposeMode();
     state.textarea.value = "";
     resizeComposer();
     state.pendingMessage = addMessage("assistant", "正在分析页面可操作元素...", { pending: true });
@@ -396,6 +521,7 @@
           pageUrl: context.url,
           selectedText: limitText(context.selectedText, MAX_SELECTION_TEXT),
           viewportText: limitText(context.viewportText, 3000),
+          permissionMode,
           elements: actionContext.elements,
         },
       });
@@ -407,23 +533,74 @@
       state.activePlan = {
         ...response.result,
         elements: actionContext.elements,
+        permissionMode,
         createdAt: Date.now(),
       };
       updatePendingActionPlan(state.activePlan);
-      setStatus(state.activePlan.steps?.length ? "操作计划已生成，确认后可执行。" : "没有可执行步骤。");
+      await maybeAutoExecutePlan(state.activePlan);
     } finally {
       setBusy(false);
     }
   }
 
-  async function executeActivePlan() {
-    const plan = state.activePlan;
+  async function maybeAutoExecutePlan(plan) {
+    if (!plan.steps?.length) {
+      setStatus("没有可执行步骤。");
+      return;
+    }
+
+    const decision = getPlanExecutionDecision(plan);
+    if (decision.auto) {
+      setStatus(decision.reason);
+      await executeActivePlan({ plan, auto: true });
+      return;
+    }
+
+    setStatus(decision.reason);
+  }
+
+  function getPlanExecutionDecision(plan) {
+    const mode = normalizeAgentPermissionMode(plan.permissionMode || getAgentPermissionMode());
+    const blockedStep = plan.steps.find((step) => isBlockedActionStep(step, plan.elements));
+    if (blockedStep) {
+      return {
+        auto: false,
+        blocked: true,
+        reason: "计划包含高风险动作，需要手动处理。",
+      };
+    }
+
+    if (mode === "default") {
+      return {
+        auto: false,
+        requiresConfirmation: true,
+        reason: "默认权限：操作计划已生成，确认后可执行。",
+      };
+    }
+
+    if (mode === "autoReview" && plan.steps.some((step) => isSensitiveActionStep(step, plan.elements))) {
+      return {
+        auto: false,
+        requiresConfirmation: true,
+        reason: "自动审查：计划包含敏感动作，确认后可执行。",
+      };
+    }
+
+    return {
+      auto: true,
+      requiresConfirmation: false,
+      reason: mode === "fullAccess" ? "完全权限：Agent 将自动执行支持的页面动作。" : "自动审查：低风险动作将自动执行。",
+    };
+  }
+
+  async function executeActivePlan(options = {}) {
+    const plan = options.plan || state.activePlan;
     if (!plan?.steps?.length) {
       setStatus("当前没有可执行的操作计划。");
       return;
     }
 
-    const unsafeStep = plan.steps.find((step) => isUnsafeActionStep(step, plan.elements));
+    const unsafeStep = plan.steps.find((step) => isBlockedActionStep(step, plan.elements));
     if (unsafeStep) {
       addMessage("assistant", `已拦截高风险操作：${describeActionStep(unsafeStep, plan.elements)}。请手动完成这类操作。`, { error: true });
       setStatus("已拦截高风险操作");
@@ -431,7 +608,7 @@
     }
 
     setStatus("正在执行页面操作...");
-    addMessage("assistant", "开始执行已确认的页面操作计划。");
+    addMessage("assistant", options.auto ? "Agent 正在自动执行页面操作计划。" : "开始执行已确认的页面操作计划。");
 
     for (let index = 0; index < plan.steps.length; index += 1) {
       const step = plan.steps[index];
@@ -838,19 +1015,26 @@
   function renderActionPlan(plan) {
     const steps = Array.isArray(plan.steps) ? plan.steps : [];
     const notes = Array.isArray(plan.notes) ? plan.notes : [];
+    const decision = getPlanExecutionDecision(plan);
+    const mode = normalizeAgentPermissionMode(plan.permissionMode || getAgentPermissionMode());
     const stepItems = steps.map((step) => `<li>${escapeHtml(describeActionStep(step, plan.elements))}</li>`).join("");
     const noteItems = notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("");
 
     return `
       <div class="pm-plan">
         <strong>${escapeHtml(plan.summary || "页面操作计划")}</strong>
+        <span class="pm-plan-mode">${escapeHtml(AGENT_PERMISSION_MODES[mode].label)} · ${escapeHtml(decision.reason)}</span>
         ${
           steps.length
             ? `<ol>${stepItems}</ol>
-              <div class="pm-plan-actions">
-                <button class="pm-inline-action" data-action="execute-plan" type="button">执行计划</button>
-                <button class="pm-inline-action" data-action="discard-plan" type="button">取消</button>
-              </div>`
+              ${
+                decision.auto
+                  ? ""
+                  : `<div class="pm-plan-actions">
+                      ${decision.blocked ? "" : `<button class="pm-inline-action" data-action="execute-plan" type="button">执行计划</button>`}
+                      <button class="pm-inline-action" data-action="discard-plan" type="button">${decision.blocked ? "知道了" : "取消"}</button>
+                    </div>`
+              }`
             : "<p>没有生成可执行步骤。</p>"
         }
         ${noteItems ? `<div class="pm-plan-notes"><span>注意</span><ul>${noteItems}</ul></div>` : ""}
@@ -986,10 +1170,18 @@
     throw new Error("目标元素不是可勾选控件。");
   }
 
-  function isUnsafeActionStep(step, elements = []) {
+  function isBlockedActionStep(step, elements = []) {
     const element = elements.find((item) => item.id === step.targetId);
     const text = normalizeText(`${step.action} ${step.value || ""} ${step.reason || ""} ${element?.label || ""} ${element?.type || ""}`).toLowerCase();
-    return /password|passwd|pwd|pay|payment|purchase|buy|order|checkout|delete|remove|destroy|transfer|withdraw|submit|publish|save|confirm|place order|密码|支付|付款|购买|下单|提交|保存|发布|确认|删除|移除|注销|转账|提现|上传|文件/.test(
+    return /password|passwd|pwd|pay|payment|purchase|buy|order|checkout|delete|remove|destroy|transfer|withdraw|place order|密码|支付|付款|购买|下单|提交订单|删除|移除|注销|转账|提现|上传|文件/.test(
+      text,
+    );
+  }
+
+  function isSensitiveActionStep(step, elements = []) {
+    const element = elements.find((item) => item.id === step.targetId);
+    const text = normalizeText(`${step.action} ${step.value || ""} ${step.reason || ""} ${element?.label || ""} ${element?.type || ""}`).toLowerCase();
+    return /submit|publish|save|confirm|send|post|apply|提交|保存|发布|确认|发送|发表|申请/.test(
       text,
     );
   }
@@ -1615,15 +1807,46 @@
       }
 
       .pm-page-state {
-        min-height: 18px;
+        display: flex;
+        min-height: 24px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
         padding: 0 2px;
       }
 
       .pm-meta {
         display: block;
+        min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+
+      .pm-permission {
+        flex: 0 0 auto;
+        border: 1px solid var(--pm-line);
+        border-radius: 999px;
+        background: #fffaf0;
+        color: #4d5a55;
+        font-size: 11px;
+        font-weight: 800;
+        line-height: 1.2;
+        max-width: 178px;
+        overflow: hidden;
+        padding: 4px 8px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .pm-permission[data-mode="autoReview"] {
+        border-color: rgba(201, 110, 61, 0.55);
+        color: #8a5734;
+      }
+
+      .pm-permission[data-mode="fullAccess"] {
+        border-color: rgba(155, 61, 43, 0.45);
+        color: var(--pm-danger);
       }
 
       .pm-chat,
@@ -1731,6 +1954,18 @@
         color: #172d2c;
         font-size: 13px;
         line-height: 1.45;
+      }
+
+      .pm-plan-mode {
+        display: block;
+        border: 1px solid #ded3bf;
+        border-radius: 999px;
+        background: #fffaf0;
+        color: #66706b;
+        font-size: 11px;
+        font-weight: 800;
+        line-height: 1.3;
+        padding: 4px 8px;
       }
 
       .pm-plan ol,

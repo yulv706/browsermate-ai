@@ -7,3 +7,4 @@ All notable changes to this project will be documented in this file.
 - Initial open-source release.
 - Added floating AI sidebar for page-aware chat.
 - Added popup actions, options page, streaming replies, retry support, and general web page text extraction.
+- Added Browser Agent page actions with default, auto-review, and full-access permission modes.

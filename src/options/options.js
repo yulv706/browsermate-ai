@@ -3,6 +3,7 @@ const DEFAULT_SETTINGS = {
   apiKey: "",
   model: "gpt-4o-mini",
   temperature: 0.3,
+  agentPermissionMode: "default",
   systemPrompt:
     "你是一个网页 AI 助手。回答必须优先基于用户当前浏览器视口中可见的网页内容；如果用户选中了文本，则选中文本优先级最高。整页正文只作为补充背景，不能覆盖当前可见内容。若可见内容不足以回答，请明确说明缺少哪些信息。回答要准确、简洁，并在有帮助时引用网页中的关键信息。",
 };
@@ -50,9 +51,27 @@ resetPromptButton.addEventListener("click", () => {
 async function load() {
   const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
   for (const [key, value] of Object.entries(settings)) {
-    const input = form.elements[key];
-    if (input) input.value = value;
+    setFormValue(key, value);
   }
+}
+
+function setFormValue(key, value) {
+  const field = form.elements[key];
+  if (!field) return;
+
+  const controls = typeof field.length === "number" && !field.tagName ? Array.from(field) : [field];
+  const radio = controls.find((control) => control.type === "radio" && control.value === String(value));
+  if (radio) {
+    radio.checked = true;
+    return;
+  }
+
+  if (field.type === "checkbox") {
+    field.checked = Boolean(value);
+    return;
+  }
+
+  field.value = value;
 }
 
 async function save(options = {}) {
@@ -60,6 +79,7 @@ async function save(options = {}) {
   data.temperature = clampTemperature(data.temperature);
   data.endpoint = data.endpoint.trim();
   data.model = data.model.trim() || DEFAULT_SETTINGS.model;
+  data.agentPermissionMode = normalizeAgentPermissionMode(data.agentPermissionMode);
   data.systemPrompt = data.systemPrompt.trim() || DEFAULT_SETTINGS.systemPrompt;
 
   await chrome.storage.sync.set(data);
@@ -70,6 +90,10 @@ function clampTemperature(value) {
   const number = Number(value || DEFAULT_SETTINGS.temperature);
   if (!Number.isFinite(number)) return DEFAULT_SETTINGS.temperature;
   return Math.min(2, Math.max(0, number));
+}
+
+function normalizeAgentPermissionMode(value) {
+  return ["default", "autoReview", "fullAccess"].includes(value) ? value : DEFAULT_SETTINGS.agentPermissionMode;
 }
 
 function setBusy(isBusy) {
